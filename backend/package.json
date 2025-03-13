@@ -1,0 +1,24 @@
+{
+  "name": "backend",
+  "module": "index.ts",
+  "type": "module",
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@google/generative-ai": "^0.24.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "mysql2": "^3.13.0",
+    "openai": "^4.87.3"
+  },
+  "scripts": {
+    "start": "bun run index.js",
+    "dev": "bun --watch index.js"
+  }
+}

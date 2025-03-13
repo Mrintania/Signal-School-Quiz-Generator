@@ -1,0 +1,102 @@
+/* Custom Styles for Quiz Generator App */
+
+/* Primary Colors */
+:root {
+  --primary-color: #6f42c1;
+  --secondary-color: #5a32a3;
+  --accent-color: #9b71d5;
+  --light-color: #f8f9fa;
+  --dark-color: #343a40;
+}
+
+/* Override Bootstrap Primary Color */
+.btn-primary {
+  background-color: var(--primary-color);
+  border-color: var(--primary-color);
+}
+
+.btn-primary:hover,
+.btn-primary:focus,
+.btn-primary:active {
+  background-color: var(--secondary-color) !important;
+  border-color: var(--secondary-color) !important;
+}
+
+.bg-primary {
+  background-color: var(--primary-color) !important;
+}
+
+/* Card Styles */
+.card {
+  border-radius: 10px;
+  border: none;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 10px 15px rgba(0, 0, 0, 0.1);
+}
+
+/* Sidebar Styles */
+.sidebar {
+  min-height: 100vh;
+  overflow-y: auto;
+  box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+}
+
+.sidebar-collapsed {
+  width: 70px;
+}
+
+.sidebar-expanded {
+  width: 250px;
+}
+
+.sidebar .nav-link {
+  border-radius: 5px;
+  margin: 5px 0;
+  transition: all 0.2s ease;
+}
+
+.sidebar .nav-link:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Animations */
+.fade-in {
+  animation: fadeIn 0.5s ease-in;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Hover Card */
+.hover-card {
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.hover-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15) !important;
+}
+
+/* Print Styles */
+@media print {
+  .sidebar,
+  .btn,
+  .no-print {
+    display: none !important;
+  }
+  
+  .content-wrapper {
+    margin-left: 0 !important;
+  }
+  
+  .card {
+    break-inside: avoid;
+  }
+}
