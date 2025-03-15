@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Container, Row, Col, Card, Button, Badge, Spinner, Form } from 'react-bootstrap';
+import { Container, Row, Col, Card, Button, Badge, Spinner, Form, Dropdown } from 'react-bootstrap';
 import { useParams, useNavigate } from 'react-router-dom';
 import { quizService } from '../services/api';
-import { FaArrowLeft, FaPrint } from 'react-icons/fa';
+import { FaArrowLeft, FaPrint, FaDownload, FaFileExport } from 'react-icons/fa';
 
 const ViewQuizPage = () => {
   const { id } = useParams();
@@ -41,6 +41,15 @@ const ViewQuizPage = () => {
   // Function to handle print
   const handlePrint = () => {
     window.print();
+  };
+  
+  // Functions to handle export
+  const handleExportToMoodle = () => {
+    quizService.exportQuizToMoodle(id);
+  };
+  
+  const handleExportToText = () => {
+    quizService.exportQuizToText(id);
   };
   
   // Format date
@@ -88,12 +97,31 @@ const ViewQuizPage = () => {
               
               <Button
                 variant="outline-secondary"
-                className="mb-2"
+                className="mb-2 me-2"
                 onClick={handlePrint}
               >
                 <FaPrint className="me-2" />
                 Print Quiz
               </Button>
+              
+              {/* ปุ่ม Export แบบ Dropdown */}
+              <Dropdown className="d-inline-block mb-2">
+                <Dropdown.Toggle variant="outline-success" id="dropdown-export">
+                  <FaFileExport className="me-2" />
+                  Export
+                </Dropdown.Toggle>
+
+                <Dropdown.Menu>
+                  <Dropdown.Item onClick={handleExportToText}>
+                    <FaDownload className="me-2" />
+                    Export as Text (.txt)
+                  </Dropdown.Item>
+                  <Dropdown.Item onClick={handleExportToMoodle}>
+                    <FaDownload className="me-2" />
+                    Export for Moodle (GIFT format)
+                  </Dropdown.Item>
+                </Dropdown.Menu>
+              </Dropdown>
             </div>
           </div>
         </Col>
@@ -174,7 +202,7 @@ const ViewQuizPage = () => {
       
       {/* Bottom navigation */}
       <Row className="mb-5">
-        <Col>
+        <Col className="d-flex justify-content-between align-items-center flex-wrap">
           <Button
             variant="outline-primary"
             onClick={() => navigate('/library')}
@@ -182,6 +210,25 @@ const ViewQuizPage = () => {
             <FaArrowLeft className="me-2" />
             Back to Library
           </Button>
+          
+          {/* ปุ่ม Export ด้านล่าง */}
+          <Dropdown>
+            <Dropdown.Toggle variant="success" id="dropdown-export">
+              <FaFileExport className="me-2" />
+              Export Quiz
+            </Dropdown.Toggle>
+
+            <Dropdown.Menu>
+              <Dropdown.Item onClick={handleExportToText}>
+                <FaDownload className="me-2" />
+                Export as Text (.txt)
+              </Dropdown.Item>
+              <Dropdown.Item onClick={handleExportToMoodle}>
+                <FaDownload className="me-2" />
+                Export for Moodle (GIFT format)
+              </Dropdown.Item>
+            </Dropdown.Menu>
+          </Dropdown>
         </Col>
       </Row>
     </Container>

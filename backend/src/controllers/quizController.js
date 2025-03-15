@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import Quiz from '../models/quiz.js';
 
+
 // ตั้งค่า Google Gemini API
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY);
 
@@ -290,6 +291,34 @@ class QuizController {
       });
     }
   }
+
+  // ฟังก์ชันสำหรับตรวจสอบชื่อข้อสอบซ้ำ
+  static async checkTitleAvailability(req, res) {
+    try {
+      const { title } = req.query;
+      
+      if (!title || title.trim() === '') {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Title is required' 
+        });
+      }
+      
+      const result = await Quiz.checkDuplicateTitle(title);
+      
+      return res.status(200).json({
+        success: true,
+        data: result
+      });
+    } catch (error) {
+      console.error('Error checking title availability:', error);
+      return res.status(500).json({ 
+        success: false, 
+        message: error.message 
+      });
+    }
+  }
+
 }
 
 export default QuizController;

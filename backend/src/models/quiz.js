@@ -192,7 +192,50 @@ class Quiz {
       console.error('Error renaming quiz:', error);
       return { success: false, error: error.message };
     }
-  } 
+  }
+  // เพิ่มฟังก์ชันใหม่สำหรับตรวจสอบชื่อข้อสอบซ้ำ
+  static async checkDuplicateTitle(title) {
+    try {
+      // ค้นหาข้อสอบที่มีชื่อเหมือนกัน หรือขึ้นต้นด้วยชื่อเดียวกันแล้วตามด้วย _ตัวเลข
+      const [rows] = await pool.execute(
+        'SELECT title FROM quizzes WHERE title = ? OR title LIKE ?',
+        [title, `${title}\\_%`]
+      );
+      
+      if (rows.length === 0) {
+        // ถ้าไม่มีชื่อซ้ำ ให้ใช้ชื่อเดิมได้เลย
+        return { 
+          isDuplicate: false, 
+          suggestedTitle: title 
+        };
+      }
+      
+      // สร้างรายการชื่อทั้งหมดที่มี
+      const existingTitles = rows.map(row => row.title);
+      
+      // ถ้ามีชื่อซ้ำ ให้สร้างชื่อใหม่โดยเพิ่ม _ตัวเลขเรียงลำดับ
+      let counter = 1;
+      let newTitle = `${title}_${counter}`;
+      
+      // ตรวจสอบจนกว่าจะพบชื่อที่ไม่ซ้ำ
+      while (existingTitles.includes(newTitle)) {
+        counter++;
+        newTitle = `${title}_${counter}`;
+      }
+      
+      return { 
+        isDuplicate: true, 
+        suggestedTitle: newTitle 
+      };
+    } catch (error) {
+      console.error('Error checking duplicate title:', error);
+      // ถ้าเกิดข้อผิดพลาด ให้แนะนำชื่อเดิมไปก่อน
+      return { 
+        isDuplicate: false, 
+        suggestedTitle: title 
+      };
+    }
+  }
 }
 
 export default Quiz;

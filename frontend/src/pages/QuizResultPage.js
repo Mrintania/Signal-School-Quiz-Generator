@@ -1,3 +1,5 @@
+// ปรับปรุงไฟล์ frontend/src/pages/QuizResultPage.js
+
 import React, { useState, useEffect } from 'react';
 import { Container, Row, Col, Card, Button, Form, Modal, Spinner, Alert } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
@@ -18,6 +20,10 @@ const QuizResultPage = () => {
   const [generatingAdditional, setGeneratingAdditional] = useState(false);
   const [showSuccessAlert, setShowSuccessAlert] = useState(false);
   
+  // State สำหรับการตรวจสอบชื่อซ้ำ
+  const [checkingTitle, setCheckingTitle] = useState(false);
+  const [titleCheckResult, setTitleCheckResult] = useState(null);
+  
   // Redirect หากไม่มีข้อมูลข้อสอบ
   useEffect(() => {
     if (!generatedQuiz) {
@@ -26,8 +32,55 @@ const QuizResultPage = () => {
   }, [generatedQuiz, navigate]);
   
   // จัดการการแสดง/ซ่อน modal
-  const handleShowSaveModal = () => setShowSaveModal(true);
-  const handleCloseSaveModal = () => setShowSaveModal(false);
+  const handleShowSaveModal = async () => {
+    // ถ้ายังไม่มีการตั้งชื่อ ให้ใช้ Topic เป็นชื่อเริ่มต้น
+    if (!quizTitle && generatedQuiz?.topic) {
+      setCheckingTitle(true);
+      try {
+        // เรียกใช้ API เพื่อตรวจสอบว่าชื่อซ้ำหรือไม่
+        const response = await quizService.checkTitleAvailability(generatedQuiz.topic);
+        if (response.success) {
+          setQuizTitle(response.data.suggestedTitle);
+          setTitleCheckResult(response.data);
+        }
+      } catch (error) {
+        console.error("Error checking title:", error);
+        // กรณีเกิดข้อผิดพลาด ใช้ชื่อ topic เดิมไปก่อน
+        setQuizTitle(generatedQuiz.topic);
+      } finally {
+        setCheckingTitle(false);
+      }
+    }
+    
+    setShowSaveModal(true);
+  };
+  
+  const handleCloseSaveModal = () => {
+    setShowSaveModal(false);
+  };
+  
+  // ฟังก์ชันตรวจสอบชื่อข้อสอบซ้ำเมื่อมีการแก้ไขชื่อด้วยตนเอง
+  const handleTitleChange = async (e) => {
+    const newTitle = e.target.value;
+    setQuizTitle(newTitle);
+    
+    if (newTitle.trim() !== '') {
+      setCheckingTitle(true);
+      try {
+        const response = await quizService.checkTitleAvailability(newTitle);
+        if (response.success) {
+          setTitleCheckResult(response.data);
+        }
+      } catch (error) {
+        console.error("Error checking title:", error);
+        setTitleCheckResult(null);
+      } finally {
+        setCheckingTitle(false);
+      }
+    } else {
+      setTitleCheckResult(null);
+    }
+  };
   
   // จัดการการบันทึกข้อสอบ
   const handleSaveQuiz = async (e) => {
@@ -66,10 +119,10 @@ const QuizResultPage = () => {
         // นำทางกลับไปหน้าหลัก
         navigate('/');
       } else {
-        setError(response.message || 'การบันทึกข้อสอบล้มเหลว');
+        setError(response.message || 'Failed to save quiz');
       }
     } catch (error) {
-      setError(error.response?.data?.message || 'เกิดข้อผิดพลาด');
+      setError(error.response?.data?.message || 'An error occurred');
     } finally {
       setLoading(false);
     }
@@ -123,10 +176,10 @@ const QuizResultPage = () => {
           });
         }, 300);
       } else {
-        setError(response.message || 'การสร้างข้อสอบเพิ่มเติมล้มเหลว');
+        setError(response.message || 'Failed to generate additional questions');
       }
     } catch (error) {
-      setError(error.response?.data?.message || 'เกิดข้อผิดพลาด');
+      setError(error.response?.data?.message || 'An error occurred');
     } finally {
       setGeneratingAdditional(false);
     }
@@ -146,7 +199,7 @@ const QuizResultPage = () => {
       {/* แสดงการแจ้งเตือนเมื่อสร้างข้อสอบเพิ่มเติมสำเร็จ */}
       {showSuccessAlert && (
         <Alert variant="success" onClose={() => setShowSuccessAlert(false)} dismissible>
-          เพิ่มข้อสอบอีก 10 ข้อสำเร็จแล้ว! เลื่อนลงเพื่อดูข้อสอบใหม่
+          Successfully added 10 more questions! Scroll down to see new questions.
         </Alert>
       )}
       
@@ -160,19 +213,19 @@ const QuizResultPage = () => {
       <Row className="mb-4">
         <Col>
           <div className="d-flex justify-content-between align-items-center">
-            <h2>ข้อสอบที่สร้าง: {generatedQuiz.topic}</h2>
+            <h2>Generated Quiz: {generatedQuiz.topic}</h2>
             <Button 
               variant="primary" 
               size="lg" 
               onClick={handleShowSaveModal}
             >
               <FaSave className="me-2" />
-              บันทึกข้อสอบ
+              Save Quiz
             </Button>
           </div>
           <p className="text-muted">
-            {generatedQuiz.questionType} | จำนวน {generatedQuiz.questions.length} ข้อ
-            {generatedQuiz.studentLevel && ` | ระดับ: ${generatedQuiz.studentLevel}`}
+            {generatedQuiz.questionType} | {generatedQuiz.questions.length} questions
+            {generatedQuiz.studentLevel && ` | Level: ${generatedQuiz.studentLevel}`}
           </p>
         </Col>
       </Row>
@@ -181,7 +234,7 @@ const QuizResultPage = () => {
       {generatedQuiz.questions.map((question, questionIndex) => (
         <Card key={questionIndex} className="mb-4 shadow-sm">
           <Card.Header className="bg-light">
-            <h5 className="mb-0">ข้อที่ {questionIndex + 1}</h5>
+            <h5 className="mb-0">Question {questionIndex + 1}</h5>
           </Card.Header>
           <Card.Body>
             <p className="h5 mb-4">{question.questionText}</p>
@@ -208,7 +261,7 @@ const QuizResultPage = () => {
             {/* คำอธิบาย */}
             <Card className="bg-light">
               <Card.Body>
-                <h6 className="mb-2">คำอธิบาย:</h6>
+                <h6 className="mb-2">Explanation:</h6>
                 <p className="mb-0">{question.explanation}</p>
               </Card.Body>
             </Card>
@@ -225,7 +278,7 @@ const QuizResultPage = () => {
             onClick={handleShowSaveModal}
           >
             <FaSave className="me-2" />
-            บันทึกข้อสอบ
+            Save Quiz
           </Button>
         </Col>
         <Col md={6} className="d-grid">
@@ -245,12 +298,12 @@ const QuizResultPage = () => {
                   aria-hidden="true"
                   className="me-2"
                 />
-                กำลังสร้างข้อสอบเพิ่มเติม...
+                Generating additional questions...
               </>
             ) : (
               <>
                 <FaPlus className="me-2" />
-                สร้างข้อสอบเพิ่มอีก 10 ข้อ
+                Generate 10 More Questions
               </>
             )}
           </Button>
@@ -261,7 +314,7 @@ const QuizResultPage = () => {
       <Row className="mb-5">
         <Col>
           <p className="text-muted small text-center">
-            การสร้างข้อสอบเพิ่มเติมจะใช้หัวข้อและเงื่อนไขเดียวกับข้อสอบชุดแรก แต่จะพยายามสร้างข้อสอบไม่ซ้ำกับชุดแรก
+            Generating additional questions will use the same topic and conditions as the first set, but will try to create non-duplicate questions.
           </p>
         </Col>
       </Row>
@@ -269,29 +322,45 @@ const QuizResultPage = () => {
       {/* Modal บันทึกข้อสอบ */}
       <Modal show={showSaveModal} onHide={handleCloseSaveModal} centered>
         <Modal.Header closeButton>
-          <Modal.Title>บันทึกข้อสอบ</Modal.Title>
+          <Modal.Title>Save Quiz</Modal.Title>
         </Modal.Header>
         <Form noValidate validated={validated} onSubmit={handleSaveQuiz}>
           <Modal.Body>
             <Form.Group controlId="quizTitle">
-              <Form.Label>ชื่อชุดข้อสอบ</Form.Label>
-              <Form.Control
-                type="text"
-                placeholder="กรอกชื่อชุดข้อสอบของคุณ"
-                value={quizTitle}
-                onChange={(e) => setQuizTitle(e.target.value)}
-                required
-              />
-              <Form.Control.Feedback type="invalid">
-                กรุณากรอกชื่อชุดข้อสอบ
-              </Form.Control.Feedback>
+              <Form.Label>Quiz Title</Form.Label>
+              {checkingTitle ? (
+                <div className="text-center py-2">
+                  <Spinner animation="border" size="sm" className="me-2" />
+                  Checking title availability...
+                </div>
+              ) : (
+                <>
+                  <Form.Control
+                    type="text"
+                    placeholder="Enter a title for your quiz"
+                    value={quizTitle}
+                    onChange={handleTitleChange}
+                    required
+                  />
+                  <Form.Control.Feedback type="invalid">
+                    Please provide a title for the quiz.
+                  </Form.Control.Feedback>
+                  
+                  {/* แสดงข้อความเตือนเมื่อชื่อซ้ำ */}
+                  {titleCheckResult?.isDuplicate && (
+                    <small className="text-info">
+                      A similar title already exists. We suggest using "{titleCheckResult.suggestedTitle}" instead.
+                    </small>
+                  )}
+                </>
+              )}
             </Form.Group>
           </Modal.Body>
           <Modal.Footer>
             <Button variant="secondary" onClick={handleCloseSaveModal}>
-              ยกเลิก
+              Cancel
             </Button>
-            <Button variant="primary" type="submit" disabled={loading}>
+            <Button variant="primary" type="submit" disabled={loading || checkingTitle}>
               {loading ? (
                 <>
                   <Spinner
@@ -302,10 +371,10 @@ const QuizResultPage = () => {
                     aria-hidden="true"
                     className="me-2"
                   />
-                  กำลังบันทึก...
+                  Saving...
                 </>
               ) : (
-                'บันทึก'
+                'Save'
               )}
             </Button>
           </Modal.Footer>

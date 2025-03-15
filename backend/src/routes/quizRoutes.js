@@ -1,5 +1,6 @@
 import express from 'express';
 import QuizController from '../controllers/quizController.js';
+import ExportController from '../controllers/exportController.js';
 
 const router = express.Router();
 
@@ -20,5 +21,14 @@ router.delete('/:id', QuizController.deleteQuiz);
 
 // API Route for renaming a quiz
 router.patch('/:id/rename', QuizController.renameQuiz);
+
+// API Route for exporting a quiz in GIFT format for Moodle
+router.get('/:id/export/moodle', ExportController.exportQuizToGift);
+
+// API Route for exporting a quiz in plain text format
+router.get('/:id/export/text', ExportController.exportQuizToPlainText);
+
+// เพิ่ม Route ใหม่สำหรับตรวจสอบชื่อข้อสอบซ้ำ
+router.get('/check-title', QuizController.checkTitleAvailability);
 
 export default router;
