@@ -1,7 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import Quiz from '../models/quiz.js';
 
-
 // ตั้งค่า Google Gemini API
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY);
 
@@ -9,7 +8,7 @@ class QuizController {
   // สร้างข้อสอบใหม่ด้วย Google Gemini API
   static async generateQuiz(req, res) {
     try {
-      const { topic, questionType, numberOfQuestions, additionalInstructions, studentLevel } = req.body;
+      const { topic, questionType, numberOfQuestions, additionalInstructions, studentLevel, language } = req.body;
       
       if (!topic || !questionType || !numberOfQuestions) {
         return res.status(400).json({ 
@@ -19,11 +18,11 @@ class QuizController {
       }
       
       // สร้าง prompt สำหรับ Google Gemini API
-      const prompt = QuizController.createPrompt(topic, questionType, numberOfQuestions, additionalInstructions, studentLevel);
+      const prompt = QuizController.createPrompt(topic, questionType, numberOfQuestions, additionalInstructions, studentLevel, language);
       
       // เลือกโมเดล และตั้งค่าพารามิเตอร์
       const model = genAI.getGenerativeModel({
-        model: "gemini-2.0-flash", // หรือใช้ "gemini-1.0-pro" หรือ "gemini-1.5-flash" gemini-2.0-flash gemini-1.5-pro
+        model: "gemini-2.0-flash", // ใช้โมเดลตามที่คุณระบุ
         generationConfig: {
           temperature: 0.7,
           maxOutputTokens: 8192,
@@ -63,6 +62,7 @@ class QuizController {
           topic,
           questionType,
           studentLevel,
+          language, // ส่งค่าภาษากลับไปด้วย
           questions: quizData.questions
         }
       });
@@ -198,9 +198,13 @@ class QuizController {
   }
   
   // สร้าง prompt สำหรับ Google Gemini API
-  // สร้าง prompt สำหรับ API
-  static createPrompt(topic, questionType, numberOfQuestions, additionalInstructions, studentLevel) {
-    let prompt = `Create a ${questionType} quiz about "${topic}" with ${numberOfQuestions} questions.`;
+  static createPrompt(topic, questionType, numberOfQuestions, additionalInstructions, studentLevel, language) {
+    // กำหนดภาษาที่ใช้ในการสร้างข้อสอบ
+    const languagePrompt = language === 'thai' 
+      ? "Create the quiz in Thai language." 
+      : "Create the quiz in English language.";
+    
+    let prompt = `Create a ${questionType} quiz about "${topic}" with ${numberOfQuestions} questions. ${languagePrompt}`;
     
     if (studentLevel) {
       prompt += ` The quiz is intended for ${studentLevel} level students.`;
@@ -291,34 +295,6 @@ class QuizController {
       });
     }
   }
-
-  // ฟังก์ชันสำหรับตรวจสอบชื่อข้อสอบซ้ำ
-  static async checkTitleAvailability(req, res) {
-    try {
-      const { title } = req.query;
-      
-      if (!title || title.trim() === '') {
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Title is required' 
-        });
-      }
-      
-      const result = await Quiz.checkDuplicateTitle(title);
-      
-      return res.status(200).json({
-        success: true,
-        data: result
-      });
-    } catch (error) {
-      console.error('Error checking title availability:', error);
-      return res.status(500).json({ 
-        success: false, 
-        message: error.message 
-      });
-    }
-  }
-
 }
 
 export default QuizController;

@@ -14,7 +14,8 @@ const CreateQuizPage = () => {
     questionType: 'Multiple Choice',
     numberOfQuestions: '10',
     additionalInstructions: '',
-    studentLevel: ''
+    studentLevel: '',
+    language: 'english' // เพิ่มค่าเริ่มต้นเป็นภาษาอังกฤษ
   });
   
   // Form validation state
@@ -91,6 +92,22 @@ const CreateQuizPage = () => {
                   <Form.Control.Feedback type="invalid">
                     Please provide a topic.
                   </Form.Control.Feedback>
+                </Form.Group>
+                
+                {/* Language Selection */}
+                <Form.Group className="mb-3" controlId="language">
+                  <Form.Label>Quiz Language</Form.Label>
+                  <Form.Select
+                    name="language"
+                    value={formData.language}
+                    onChange={handleChange}
+                  >
+                    <option value="english">English</option>
+                    <option value="thai">ภาษาไทย</option>
+                  </Form.Select>
+                  <Form.Text className="text-muted">
+                    Select the language for your quiz questions and answers.
+                  </Form.Text>
                 </Form.Group>
                 
                 {/* Question Type Dropdown */}

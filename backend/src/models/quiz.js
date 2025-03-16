@@ -3,7 +3,7 @@ import { pool } from '../config/db.js';
 class Quiz {
   // บันทึกข้อสอบใหม่ลงในฐานข้อมูล
   static async saveQuiz(quizData) {
-    const { title, topic, questionType, studentLevel, questions } = quizData;
+    const { title, topic, questionType, studentLevel, language, questions } = quizData;
     
     try {
       const connection = await pool.getConnection();
@@ -14,8 +14,8 @@ class Quiz {
       try {
         // เพิ่มข้อมูลเข้าตาราง quizzes
         const [quizResult] = await connection.execute(
-          'INSERT INTO quizzes (title, topic, question_type, student_level, created_at) VALUES (?, ?, ?, ?, NOW())',
-          [title, topic, questionType, studentLevel]
+          'INSERT INTO quizzes (title, topic, question_type, student_level, language, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
+          [title, topic, questionType, studentLevel, language || 'english'] // ถ้าไม่มีการระบุภาษา ให้เป็นภาษาอังกฤษเป็นค่าเริ่มต้น
         );
         
         const quizId = quizResult.insertId;
@@ -193,7 +193,8 @@ class Quiz {
       return { success: false, error: error.message };
     }
   }
-  // เพิ่มฟังก์ชันใหม่สำหรับตรวจสอบชื่อข้อสอบซ้ำ
+  
+  // ตรวจสอบชื่อข้อสอบซ้ำ
   static async checkDuplicateTitle(title) {
     try {
       // ค้นหาข้อสอบที่มีชื่อเหมือนกัน หรือขึ้นต้นด้วยชื่อเดียวกันแล้วตามด้วย _ตัวเลข
