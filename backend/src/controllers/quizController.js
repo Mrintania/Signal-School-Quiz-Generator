@@ -23,7 +23,7 @@ class QuizController {
       
       // เลือกโมเดล และตั้งค่าพารามิเตอร์
       const model = genAI.getGenerativeModel({
-        model: "gemini-1.5-pro", // หรือใช้ "gemini-1.0-pro" หรือ "gemini-1.5-flash"
+        model: "gemini-2.0-flash", // หรือใช้ "gemini-1.0-pro" หรือ "gemini-1.5-flash" gemini-2.0-flash gemini-1.5-pro
         generationConfig: {
           temperature: 0.7,
           maxOutputTokens: 8192,
