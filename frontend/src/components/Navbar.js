@@ -9,6 +9,8 @@ const Navbar = () => {
     <BSNavbar bg="white" expand="lg" className="shadow-sm py-2 mb-4">
       <Container fluid>
         <Link to="/" className="navbar-brand d-flex align-items-center">
+        {/* Logo from ./assets/logo.png */}
+          <img src={logo} alt="Signal School Quiz Generator" width="32" height="32" className="me-2" />
           {/* <FaBrain size={32} className="me-2" style={{ color: '#6f42c1' }} /> */}
           <span className="fw-bold" style={{ color: '#6f42c1' }}>Signal School Quiz Generator</span>
         </Link>

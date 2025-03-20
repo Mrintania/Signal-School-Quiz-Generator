@@ -22,7 +22,7 @@ export const quizService = {
       throw error;
     }
   },
-  
+
   // Save a generated quiz
   saveQuiz: async (quizData) => {
     try {
@@ -33,7 +33,7 @@ export const quizService = {
       throw error;
     }
   },
-  
+
   // Get all quizzes
   getAllQuizzes: async () => {
     try {
@@ -44,7 +44,7 @@ export const quizService = {
       throw error;
     }
   },
-  
+
   // Get a quiz by ID
   getQuizById: async (quizId) => {
     try {
@@ -55,7 +55,7 @@ export const quizService = {
       throw error;
     }
   },
-  
+
   // Delete a quiz
   deleteQuiz: async (quizId) => {
     try {
@@ -77,23 +77,21 @@ export const quizService = {
       throw error;
     }
   },
-  
-  // เพิ่มฟังก์ชันใหม่สำหรับ Export ข้อสอบ
-  
+
   // Export quiz to Moodle GIFT format
   exportQuizToMoodle: (quizId) => {
     // สร้าง URL สำหรับดาวน์โหลดไฟล์
     const downloadUrl = `${API_URL}/quizzes/${quizId}/export/moodle`;
-    
+
     // เปิด URL ในแท็บใหม่หรือเริ่มการดาวน์โหลด
     window.open(downloadUrl, '_blank');
   },
-  
+
   // Export quiz to plain text format
   exportQuizToText: (quizId) => {
     // สร้าง URL สำหรับดาวน์โหลดไฟล์
     const downloadUrl = `${API_URL}/quizzes/${quizId}/export/text`;
-    
+
     // เปิด URL ในแท็บใหม่หรือเริ่มการดาวน์โหลด
     window.open(downloadUrl, '_blank');
   }

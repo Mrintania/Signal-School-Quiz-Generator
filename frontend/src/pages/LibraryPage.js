@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Container, Row, Col, Card, Button, Badge, Spinner, Modal, Form, Alert } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import { quizService } from '../services/api';
@@ -9,12 +9,14 @@ const LibraryPage = () => {
   const [quizzes, setQuizzes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  
+  const [questionCounts, setQuestionCounts] = useState({});
+  const [loadingCounts, setLoadingCounts] = useState(false);
+
   // State for delete confirmation modal
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [quizToDelete, setQuizToDelete] = useState(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
-  
+
   // State for rename modal
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [quizToRename, setQuizToRename] = useState(null);
@@ -23,22 +25,18 @@ const LibraryPage = () => {
   const [validated, setValidated] = useState(false);
 
 
-  
-  // Fetch quizzes on component mount
-  useEffect(() => {
-    fetchQuizzes();
-  }, []);
-  
   // Function to fetch quizzes from API
-  const fetchQuizzes = async () => {
+  const fetchQuizzes = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-      
+
       const response = await quizService.getAllQuizzes();
-      
+
       if (response.success) {
         setQuizzes(response.data);
+        // After fetching quizzes, get question counts
+        fetchAllQuestionCounts(response.data);
       } else {
         setError(response.message || 'Failed to fetch quizzes');
       }
@@ -47,27 +45,84 @@ const LibraryPage = () => {
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  // Fetch quizzes on component mount
+  useEffect(() => {
+    fetchQuizzes();
+  }, [fetchQuizzes]);
+
+  // Function to fetch question counts for all quizzes
+  const fetchAllQuestionCounts = async (quizzesList) => {
+    try {
+      setLoadingCounts(true);
+
+      // ทำการดึงข้อมูลแบบละเอียดสำหรับแต่ละ quiz ที่ไม่มีข้อมูล questions
+      const counts = {};
+
+      // สร้าง array of promises สำหรับการดึงรายละเอียด quiz
+      const countPromises = quizzesList.map(async (quiz) => {
+        if (!quiz.questions || !Array.isArray(quiz.questions)) {
+          try {
+            // ดึงข้อมูล quiz แบบละเอียด แทนที่จะใช้ endpoint count ที่ไม่มี
+            const response = await quizService.getQuizById(quiz.id);
+            if (response.success && response.data && response.data.questions) {
+              counts[quiz.id] = response.data.questions.length;
+            } else {
+              console.warn(`Could not get questions for quiz ID ${quiz.id}`);
+              counts[quiz.id] = 0;
+            }
+          } catch (error) {
+            console.error(`Error fetching quiz details for ID ${quiz.id}:`, error);
+            counts[quiz.id] = 0;
+          }
+        } else {
+          // ถ้ามีข้อมูล questions อยู่แล้ว ให้ใช้ค่าความยาวของ array
+          counts[quiz.id] = quiz.questions.length;
+        }
+      });
+
+      // รอให้ทุก promise เสร็จสิ้น
+      await Promise.all(countPromises);
+
+      setQuestionCounts(counts);
+    } catch (error) {
+      console.error('Error fetching question counts:', error);
+    } finally {
+      setLoadingCounts(false);
+    }
   };
-  
+
+  // Function to get question count for a quiz
+  const getQuestionCount = (quiz) => {
+    // ถ้ามีข้อมูล questions และเป็น array ให้ใช้ค่าความยาวของ array
+    if (quiz.questions && Array.isArray(quiz.questions)) {
+      return quiz.questions.length;
+    }
+
+    // ถ้าไม่มี ให้ใช้ค่าจาก questionCounts หรือ 0
+    return questionCounts[quiz.id] || 0;
+  };
+
   // Function to handle delete button click
   const handleDeleteClick = (quiz) => {
     setQuizToDelete(quiz);
     setShowDeleteModal(true);
   };
-  
+
   // Function to close delete modal
   const handleCloseDeleteModal = () => {
     setShowDeleteModal(false);
     setQuizToDelete(null);
   };
-  
+
   // Function to delete quiz
   const handleDeleteQuiz = async () => {
     try {
       setDeleteLoading(true);
-      
+
       const response = await quizService.deleteQuiz(quizToDelete.id);
-      
+
       if (response.success) {
         // Remove the deleted quiz from the list
         setQuizzes(quizzes.filter(quiz => quiz.id !== quizToDelete.id));
@@ -81,7 +136,7 @@ const LibraryPage = () => {
       setDeleteLoading(false);
     }
   };
-  
+
   // Function to handle rename button click
   const handleRenameClick = (quiz) => {
     setQuizToRename(quiz);
@@ -89,18 +144,18 @@ const LibraryPage = () => {
     setShowRenameModal(true);
     setValidated(false);
   };
-  
+
   // Function to close rename modal
   const handleCloseRenameModal = () => {
     setShowRenameModal(false);
     setQuizToRename(null);
     setNewTitle('');
   };
-  
+
   // Function to rename quiz
   const handleRenameQuiz = async (e) => {
     e.preventDefault();
-    
+
     // Form validation
     const form = e.currentTarget;
     if (form.checkValidity() === false) {
@@ -108,17 +163,17 @@ const LibraryPage = () => {
       setValidated(true);
       return;
     }
-    
+
     try {
       setRenameLoading(true);
-      
+
       const response = await quizService.renameQuiz(quizToRename.id, newTitle);
-      
+
       if (response.success) {
         // Update the quiz name in the list
-        setQuizzes(quizzes.map(quiz => 
-          quiz.id === quizToRename.id 
-            ? { ...quiz, title: newTitle } 
+        setQuizzes(quizzes.map(quiz =>
+          quiz.id === quizToRename.id
+            ? { ...quiz, title: newTitle }
             : quiz
         ));
         handleCloseRenameModal();
@@ -131,13 +186,13 @@ const LibraryPage = () => {
       setRenameLoading(false);
     }
   };
-  
+
   // Format date
   const formatDate = (dateString) => {
     const options = { year: 'numeric', month: 'short', day: 'numeric' };
     return new Date(dateString).toLocaleDateString(undefined, options);
   };
-  
+
   return (
     <Container className="py-4">
       <Row className="mb-4">
@@ -153,21 +208,21 @@ const LibraryPage = () => {
           </div>
         </Col>
       </Row>
-      
+
       {/* Error Message */}
       {error && (
         <Alert variant="danger" onClose={() => setError(null)} dismissible>
           {error}
         </Alert>
       )}
-      
+
       {/* Loading Spinner */}
       {loading && (
         <div className="text-center py-5">
           <Spinner animation="border" variant="primary" />
         </div>
       )}
-      
+
       {/* No Quizzes Message */}
       {!loading && !error && quizzes.length === 0 && (
         <Card className="text-center py-5">
@@ -183,7 +238,7 @@ const LibraryPage = () => {
           </Card.Body>
         </Card>
       )}
-      
+
       {/* Quizzes List */}
       {!loading && !error && quizzes.length > 0 && (
         <Row xs={1} md={2} lg={3} className="g-4">
@@ -195,7 +250,7 @@ const LibraryPage = () => {
                   <Card.Subtitle className="mb-3 text-muted">
                     {quiz.topic}
                   </Card.Subtitle>
-                  
+
                   <div className="mb-3">
                     <Badge bg="primary" className="me-2">
                       {quiz.question_type === 'Multiple Choice' ? 'Multiple Choice' : 'Essay'}
@@ -206,10 +261,20 @@ const LibraryPage = () => {
                       </Badge>
                     )}
                   </div>
-                  
-                  <p className="text-muted mb-0">
-                    Created: {formatDate(quiz.created_at)}
-                  </p>
+
+                  <div className="d-flex justify-content-between align-items-center mb-2">
+                    <p className="text-muted mb-0">
+                      Created: {formatDate(quiz.created_at)}
+                    </p>
+                    <Badge bg="info">
+                      {getQuestionCount(quiz)} Questions
+                      {loadingCounts && !questionCounts[quiz.id] && !quiz.questions &&
+                        <Spinner animation="border" size="sm" className="ms-1" />}
+                    </Badge>
+                  </div>
+
+
+
                 </Card.Body>
                 <Card.Footer className="bg-white border-top-0">
                   <div className="d-flex justify-content-between">
@@ -220,8 +285,8 @@ const LibraryPage = () => {
                           See Quiz
                         </Button>
                       </Link>
-                      <Button 
-                        variant="outline-secondary" 
+                      <Button
+                        variant="outline-secondary"
                         size="sm"
                         onClick={() => handleRenameClick(quiz)}
                       >
@@ -229,8 +294,8 @@ const LibraryPage = () => {
                         Rename
                       </Button>
                     </div>
-                    <Button 
-                      variant="outline-danger" 
+                    <Button
+                      variant="outline-danger"
                       size="sm"
                       onClick={() => handleDeleteClick(quiz)}
                     >
@@ -244,21 +309,21 @@ const LibraryPage = () => {
           ))}
         </Row>
       )}
-      
+
       {/* Delete Confirmation Modal */}
       <Modal show={showDeleteModal} onHide={handleCloseDeleteModal} centered>
         <Modal.Header closeButton>
           <Modal.Title>Delete quiz</Modal.Title>
         </Modal.Header>
         <Modal.Body>
-        Are you sure you want to delete the Quiz? "{quizToDelete?.title}"? This action is irreversible.
+          Are you sure you want to delete the Quiz? "{quizToDelete?.title}"? This action is irreversible.
         </Modal.Body>
         <Modal.Footer>
           <Button variant="secondary" onClick={handleCloseDeleteModal}>
             Cancel
           </Button>
-          <Button 
-            variant="danger" 
+          <Button
+            variant="danger"
             onClick={handleDeleteQuiz}
             disabled={deleteLoading}
           >
@@ -280,7 +345,7 @@ const LibraryPage = () => {
           </Button>
         </Modal.Footer>
       </Modal>
-      
+
       {/* Rename Modal */}
       <Modal show={showRenameModal} onHide={handleCloseRenameModal} centered>
         <Modal.Header closeButton>

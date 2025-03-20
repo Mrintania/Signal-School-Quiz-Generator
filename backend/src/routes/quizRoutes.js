@@ -28,7 +28,6 @@ router.get('/:id/export/moodle', ExportController.exportQuizToGift);
 // API Route for exporting a quiz in plain text format
 router.get('/:id/export/text', ExportController.exportQuizToPlainText);
 
-// เพิ่ม Route ใหม่สำหรับตรวจสอบชื่อข้อสอบซ้ำ
+// API Route for checking title availability
 // router.get('/check-title', QuizController.checkTitleAvailability);
-
 export default router;

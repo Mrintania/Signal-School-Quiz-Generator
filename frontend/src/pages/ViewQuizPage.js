@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Container, Row, Col, Card, Button, Badge, Spinner, Form, Dropdown } from 'react-bootstrap';
+import { Container, Row, Col, Card, Button, Badge, Spinner, Dropdown } from 'react-bootstrap';
 import { useParams, useNavigate } from 'react-router-dom';
 import { quizService } from '../services/api';
 import { FaArrowLeft, FaPrint, FaDownload, FaFileExport } from 'react-icons/fa';
@@ -166,6 +166,7 @@ const ViewQuizPage = () => {
         <Card key={questionIndex} className="mb-4 shadow-sm">
           <Card.Header className="bg-light">
             <h5 className="mb-0">Question {questionIndex + 1}</h5>
+            <small className="text-muted">Question {questionIndex + 1} of {quiz.questions.length}</small>
           </Card.Header>
           <Card.Body>
             <p className="h5 mb-4">{question.questionText}</p>
