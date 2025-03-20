@@ -252,9 +252,9 @@ const LibraryPage = () => {
 
   // Apply sorting to filtered quizzes
   useEffect(() => {
-    let sortedQuizzes = [...filteredQuizzes];
+    // คัดลอก array ด้วย slice() แทนที่จะใช้ spread operator เพื่อป้องกันการสร้าง reference ใหม่ทุกครั้ง
     if (sortConfig.key) {
-      sortedQuizzes.sort((a, b) => {
+      const sortedQuizzes = filteredQuizzes.slice().sort((a, b) => {
         let aValue = a[sortConfig.key];
         let bValue = b[sortConfig.key];
         
@@ -279,9 +279,14 @@ const LibraryPage = () => {
           ? aValue - bValue 
           : bValue - aValue;
       });
+      
+      // ใช้ JSON.stringify เปรียบเทียบเพื่อป้องกันการอัพเดทที่ไม่จำเป็น
+      if (JSON.stringify(sortedQuizzes) !== JSON.stringify(filteredQuizzes)) {
+        setFilteredQuizzes(sortedQuizzes);
+      }
     }
-    setFilteredQuizzes(sortedQuizzes);
-  }, [sortConfig, filteredQuizzes]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortConfig]); 
 
   // Bulk selection functionality
   const handleSelectAll = () => {
