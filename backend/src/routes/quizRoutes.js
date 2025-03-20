@@ -29,6 +29,6 @@ router.get('/:id/export/moodle', ExportController.exportQuizToGift);
 router.get('/:id/export/text', ExportController.exportQuizToPlainText);
 
 // เพิ่ม Route ใหม่สำหรับตรวจสอบชื่อข้อสอบซ้ำ
-router.get('/check-title', QuizController.checkTitleAvailability);
+// router.get('/check-title', QuizController.checkTitleAvailability);
 
 export default router;

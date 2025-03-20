@@ -21,6 +21,8 @@ const LibraryPage = () => {
   const [newTitle, setNewTitle] = useState('');
   const [renameLoading, setRenameLoading] = useState(false);
   const [validated, setValidated] = useState(false);
+
+
   
   // Fetch quizzes on component mount
   useEffect(() => {

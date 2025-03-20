@@ -173,19 +173,17 @@ const ViewQuizPage = () => {
             {/* Multiple Choice Options */}
             {quiz.question_type === 'Multiple Choice' && (
               <div className="mb-4">
-                {question.options.map((option, optionIndex) => (
-                  <div key={optionIndex} className="mb-2">
-                    <Form.Check
-                      type="radio"
-                      id={`q${questionIndex}-option${optionIndex}`}
-                      label={option.text}
-                      name={`question-${questionIndex}`}
-                      checked={option.isCorrect}
-                      disabled
-                      className={option.isCorrect ? 'text-success fw-bold' : ''}
-                    />
-                  </div>
-                ))}
+                {question.options.map((option, optionIndex) => {
+                  const optionLabel = String.fromCharCode(65 + optionIndex); // A, B, C, D, ...
+                  return (
+                    <div key={optionIndex} className="mb-3 ps-2">
+                      <span className={option.isCorrect ? 'text-success fw-bold' : ''}>
+                        <strong>{optionLabel}.</strong> {option.text}
+                        {option.isCorrect && ' ✓'}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             )}
             
