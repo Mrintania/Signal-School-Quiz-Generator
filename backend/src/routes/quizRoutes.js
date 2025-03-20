@@ -28,6 +28,9 @@ router.get('/:id/export/moodle', ExportController.exportQuizToGift);
 // API Route for exporting a quiz in plain text format
 router.get('/:id/export/text', ExportController.exportQuizToPlainText);
 
+// API Route for updating quiz questions
+router.patch('/:id/questions', QuizController.updateQuizQuestions);
+
 // API Route for checking title availability
 // router.get('/check-title', QuizController.checkTitleAvailability);
 export default router;

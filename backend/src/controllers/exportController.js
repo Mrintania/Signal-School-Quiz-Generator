@@ -55,11 +55,11 @@ class ExportController {
           });
           
           // เพิ่มคำอธิบาย (ถ้ามี)
-          if (question.explanation) {
-            giftContent += `  ####${escapeGiftSpecialChars(question.explanation)}\n`;
-          }
+          // if (question.explanation) {
+          //   giftContent += `  ####${escapeGiftSpecialChars(question.explanation)}\n`;
+          // }
           
-          giftContent += "}\n\n";
+          // giftContent += "}\n\n";
         } else {
           // สำหรับข้อสอบแบบอัตนัย
           giftContent += "{\n";
