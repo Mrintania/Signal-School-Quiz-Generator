@@ -1,0 +1,68 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=https://api.signalschoolquiz.com
+    networks:
+      - quiz-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    ports:
+      - "5000:5000"
+    env_file:
+      - ./backend/.env.production
+    networks:
+      - quiz-network
+
+  database:
+    image: mysql:8.0
+    volumes:
+      - quiz-db-data:/var/lib/mysql
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    environment:
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
+      MYSQL_DATABASE: quiz_generator
+      MYSQL_USER_FILE: /run/secrets/db_user
+      MYSQL_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_root_password
+      - db_user
+      - db_password
+    networks:
+      - quiz-network
+
+  nginx:
+    image: nginx:alpine
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/ssl:/etc/nginx/ssl
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - quiz-network
+
+volumes:
+  quiz-db-data:
+
+secrets:
+  db_root_password:
+    file: ./secrets/db_root_password
+  db_user:
+    file: ./secrets/db_user
+  db_password:
+    file: ./secrets/db_password
+
+networks:
+  quiz-network:
+    driver: bridge

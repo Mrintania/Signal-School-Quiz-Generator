@@ -1,0 +1,30 @@
+FROM oven/bun:latest
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy package files
+COPY package.json bun.lockb ./
+
+# Install dependencies
+RUN bun install --production
+
+# Copy application files
+COPY . .
+
+# Create a production .env file
+COPY .env.production .env
+
+# Expose port
+EXPOSE 5000
+
+# Set environment to production
+ENV NODE_ENV=production
+
+# Start the application
+CMD ["bun", "start"]
