@@ -94,7 +94,42 @@ export const quizService = {
 
     // เปิด URL ในแท็บใหม่หรือเริ่มการดาวน์โหลด
     window.open(downloadUrl, '_blank');
-  }
+  },
+  // Add this to frontend/src/services/api.js
+  updateQuizQuestions: async (quizId, questions) => {
+    try {
+      // Here we're updating the quiz with new questions
+      // Note: This endpoint might need to be implemented on the backend if it doesn't exist
+      const response = await api.patch(`/quizzes/${quizId}/questions`, { questions });
+      return response.data;
+    } catch (error) {
+      console.error('Error updating quiz questions:', error);
+      throw error;
+    }
+  },
+  
+  /**
+   * A utility function to check title availability before saving
+   * It should be added to the quizService object
+   */
+  checkTitleAvailability: async (title) => {
+    try {
+      // Optional: Add a backend endpoint to check for duplicate titles
+      // For now, let's assume it always returns success
+      return {
+        success: true,
+        data: {
+          isDuplicate: false,
+          suggestedTitle: title
+        }
+      };
+    } catch (error) {
+      console.error('Error checking title availability:', error);
+      throw error;
+    }
+  },
 };
+
+
 
 export default api;

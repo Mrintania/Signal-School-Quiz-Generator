@@ -15,7 +15,7 @@ const CreateQuizPage = () => {
     numberOfQuestions: '10',
     additionalInstructions: '',
     studentLevel: '',
-    language: 'english' // เพิ่มค่าเริ่มต้นเป็นภาษาอังกฤษ
+    language: 'thai' // เพิ่มค่าเริ่มต้นเป็นภาษาอังกฤษ
   });
   
   // Form validation state

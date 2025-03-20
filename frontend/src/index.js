@@ -4,6 +4,9 @@ import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
 
+// จากการดูโค้ดของคุณ พบว่าคุณไม่ได้ใช้ createBrowserRouter
+// แต่ใช้ BrowserRouter ใน App.js ดังนั้นเราต้องแก้ไขใน App.js แทน
+
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
   <React.StrictMode>

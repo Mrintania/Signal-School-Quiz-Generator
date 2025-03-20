@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Container, Row, Col, Card, Button, Badge, Spinner, Modal, Form, Alert } from 'react-bootstrap';
+import { Container, Row, Col, Card, Button, Badge, Spinner, Modal, Form, Alert, InputGroup, Dropdown, DropdownButton } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import { quizService } from '../services/api';
-import { FaEye, FaTrashAlt, FaPlus, FaEdit } from 'react-icons/fa';
+import { FaEye, FaTrashAlt, FaPlus, FaEdit, FaSearch, FaSortAlphaDown, FaSortAlphaUp, FaSortNumericDown, FaSortNumericUp, FaCheckSquare, FaTasks } from 'react-icons/fa';
 
 const LibraryPage = () => {
-  // State for quizzes list
+  // State for quizzes list and filtered quizzes
   const [quizzes, setQuizzes] = useState([]);
+  const [filteredQuizzes, setFilteredQuizzes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [questionCounts, setQuestionCounts] = useState({});
@@ -24,6 +25,20 @@ const LibraryPage = () => {
   const [renameLoading, setRenameLoading] = useState(false);
   const [validated, setValidated] = useState(false);
 
+  // State for search functionality
+  const [searchTerm, setSearchTerm] = useState('');
+  
+  // State for sorting functionality
+  const [sortConfig, setSortConfig] = useState({
+    key: 'created_at',
+    direction: 'desc' // Newest first by default
+  });
+
+  // State for bulk actions
+  const [selectedQuizzes, setSelectedQuizzes] = useState([]);
+  const [selectAll, setSelectAll] = useState(false);
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+  const [bulkDeleteLoading, setBulkDeleteLoading] = useState(false);
 
   // Function to fetch quizzes from API
   const fetchQuizzes = useCallback(async () => {
@@ -35,6 +50,7 @@ const LibraryPage = () => {
 
       if (response.success) {
         setQuizzes(response.data);
+        setFilteredQuizzes(response.data);
         // After fetching quizzes, get question counts
         fetchAllQuestionCounts(response.data);
       } else {
@@ -104,7 +120,7 @@ const LibraryPage = () => {
     return questionCounts[quiz.id] || 0;
   };
 
-  // Function to handle delete button click
+  // Function to handle single delete button click
   const handleDeleteClick = (quiz) => {
     setQuizToDelete(quiz);
     setShowDeleteModal(true);
@@ -116,7 +132,7 @@ const LibraryPage = () => {
     setQuizToDelete(null);
   };
 
-  // Function to delete quiz
+  // Function to delete a single quiz
   const handleDeleteQuiz = async () => {
     try {
       setDeleteLoading(true);
@@ -125,7 +141,11 @@ const LibraryPage = () => {
 
       if (response.success) {
         // Remove the deleted quiz from the list
-        setQuizzes(quizzes.filter(quiz => quiz.id !== quizToDelete.id));
+        const updatedQuizzes = quizzes.filter(quiz => quiz.id !== quizToDelete.id);
+        setQuizzes(updatedQuizzes);
+        setFilteredQuizzes(updatedQuizzes);
+        // Also remove from selected quizzes if it was selected
+        setSelectedQuizzes(prevSelected => prevSelected.filter(id => id !== quizToDelete.id));
         handleCloseDeleteModal();
       } else {
         setError(response.message || 'Failed to delete quiz');
@@ -171,11 +191,13 @@ const LibraryPage = () => {
 
       if (response.success) {
         // Update the quiz name in the list
-        setQuizzes(quizzes.map(quiz =>
+        const updatedQuizzes = quizzes.map(quiz =>
           quiz.id === quizToRename.id
             ? { ...quiz, title: newTitle }
             : quiz
-        ));
+        );
+        setQuizzes(updatedQuizzes);
+        setFilteredQuizzes(updatedQuizzes);
         handleCloseRenameModal();
       } else {
         setError(response.message || 'Failed to rename quiz');
@@ -193,11 +215,162 @@ const LibraryPage = () => {
     return new Date(dateString).toLocaleDateString(undefined, options);
   };
 
+  // Search functionality
+  useEffect(() => {
+    if (searchTerm.trim() === '') {
+      setFilteredQuizzes(quizzes);
+    } else {
+      const lowercasedTerm = searchTerm.toLowerCase();
+      const filtered = quizzes.filter(quiz => 
+        quiz.title.toLowerCase().includes(lowercasedTerm) || 
+        quiz.topic.toLowerCase().includes(lowercasedTerm) ||
+        (quiz.student_level && quiz.student_level.toLowerCase().includes(lowercasedTerm))
+      );
+      setFilteredQuizzes(filtered);
+    }
+  }, [searchTerm, quizzes]);
+
+  // Function to handle search input change
+  const handleSearchChange = (e) => {
+    setSearchTerm(e.target.value);
+  };
+
+  // Sorting functionality
+  const requestSort = (key) => {
+    let direction = 'asc';
+    if (sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
+    }
+    setSortConfig({ key, direction });
+  };
+
+  // Update selectAll state when selections change
+  
+  useEffect(() => {
+    setSelectAll(selectedQuizzes.length > 0 && selectedQuizzes.length === filteredQuizzes.length);
+  }, [selectedQuizzes, filteredQuizzes, sortConfig]);
+
+  // Apply sorting to filtered quizzes
+  useEffect(() => {
+    // คัดลอก array ด้วย slice() แทนที่จะใช้ spread operator เพื่อป้องกันการสร้าง reference ใหม่ทุกครั้ง
+    if (sortConfig.key) {
+      const sortedQuizzes = filteredQuizzes.slice().sort((a, b) => {
+        let aValue = a[sortConfig.key];
+        let bValue = b[sortConfig.key];
+        
+        // For string comparison (title, topic)
+        if (typeof aValue === 'string' && typeof bValue === 'string') {
+          // Use localeCompare for proper string sorting (handles Thai characters)
+          const comparison = aValue.localeCompare(bValue, undefined, { sensitivity: 'base' });
+          return sortConfig.direction === 'asc' ? comparison : -comparison;
+        }
+        
+        // For date comparison
+        if (sortConfig.key === 'created_at') {
+          const dateA = new Date(aValue);
+          const dateB = new Date(bValue);
+          return sortConfig.direction === 'asc' 
+            ? dateA - dateB 
+            : dateB - dateA;
+        }
+        
+        // For numeric comparison
+        return sortConfig.direction === 'asc' 
+          ? aValue - bValue 
+          : bValue - aValue;
+      });
+      
+      // ใช้ JSON.stringify เปรียบเทียบเพื่อป้องกันการอัพเดทที่ไม่จำเป็น
+      if (JSON.stringify(sortedQuizzes) !== JSON.stringify(filteredQuizzes)) {
+        setFilteredQuizzes(sortedQuizzes);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortConfig]); 
+
+  // Bulk selection functionality
+  const handleSelectAll = () => {
+    if (selectAll) {
+      // If currently all selected, deselect all
+      setSelectedQuizzes([]);
+    } else {
+      // Select all filtered quizzes
+      setSelectedQuizzes(filteredQuizzes.map(quiz => quiz.id));
+    }
+    setSelectAll(!selectAll);
+  };
+  
+  // Function to clear all selections
+  const clearAllSelections = () => {
+    setSelectedQuizzes([]);
+    setSelectAll(false);
+  };
+
+  const handleSelectQuiz = (quizId) => {
+    setSelectedQuizzes(prevSelected => {
+      if (prevSelected.includes(quizId)) {
+        // Deselect the quiz
+        return prevSelected.filter(id => id !== quizId);
+      } else {
+        // Select the quiz
+        return [...prevSelected, quizId];
+      }
+    });
+  };
+  
+  // Bulk delete functionality
+  const handleBulkDeleteClick = () => {
+    if (selectedQuizzes.length > 0) {
+      setShowBulkDeleteModal(true);
+    }
+  };
+
+  const handleCloseBulkDeleteModal = () => {
+    setShowBulkDeleteModal(false);
+  };
+
+  const handleBulkDeleteQuizzes = async () => {
+    try {
+      setBulkDeleteLoading(true);
+      
+      // Create an array of promises for deleting each quiz
+      const deletePromises = selectedQuizzes.map(quizId => 
+        quizService.deleteQuiz(quizId)
+      );
+      
+      // Execute all delete requests in parallel
+      const results = await Promise.allSettled(deletePromises);
+      
+      // Check results and count successful deletions
+      const successCount = results.filter(result => result.status === 'fulfilled' && result.value.success).length;
+      
+      if (successCount > 0) {
+        // Remove deleted quizzes from the state
+        const remainingQuizzes = quizzes.filter(quiz => !selectedQuizzes.includes(quiz.id));
+        setQuizzes(remainingQuizzes);
+        setFilteredQuizzes(remainingQuizzes);
+        setSelectedQuizzes([]);
+        handleCloseBulkDeleteModal();
+        
+        // Show success message
+        setError(`Successfully deleted ${successCount} ${successCount === 1 ? 'quiz' : 'quizzes'}.`);
+        setTimeout(() => setError(null), 3000);
+      } else {
+        setError('Failed to delete quizzes. Please try again.');
+      }
+    } catch (error) {
+      setError('An error occurred during bulk deletion.');
+      console.error('Bulk deletion error:', error);
+    } finally {
+      setBulkDeleteLoading(false);
+    }
+  };
+
   return (
     <Container className="py-4">
       <Row className="mb-4">
         <Col>
-          <div className="d-flex justify-content-between align-items-center">
+          <div className="d-flex justify-content-between align-items-center flex-wrap">
             <h2>Library</h2>
             <Link to="/create">
               <Button variant="primary">
@@ -214,6 +387,91 @@ const LibraryPage = () => {
         <Alert variant="danger" onClose={() => setError(null)} dismissible>
           {error}
         </Alert>
+      )}
+
+      {/* Search and Sort Controls */}
+      {!loading && !error && quizzes.length > 0 && (
+        <Row className="mb-4">
+          {/* Search Bar */}
+          <Col md={6} className="mb-3 mb-md-0">
+            <InputGroup>
+              <InputGroup.Text>
+                <FaSearch />
+              </InputGroup.Text>
+              <Form.Control
+                placeholder="Search quizzes by title, topic, or level..."
+                value={searchTerm}
+                onChange={handleSearchChange}
+              />
+            </InputGroup>
+          </Col>
+          
+          {/* Sort Controls */}
+          <Col md={6} className="d-flex justify-content-md-end">
+            <DropdownButton 
+              variant="outline-secondary" 
+              title={
+                <>
+                  Sort by: {sortConfig.key === 'title' 
+                  ? 'Alphabetical' 
+                  : sortConfig.key === 'created_at' 
+                  ? 'Date Created' 
+                  : 'Custom'}
+                </>
+              }
+              className="me-2"
+            >
+              <Dropdown.Item 
+                onClick={() => requestSort('title')} 
+                active={sortConfig.key === 'title'}
+              >
+                {sortConfig.key === 'title' && sortConfig.direction === 'asc' 
+                  ? <FaSortAlphaDown className="me-2" /> 
+                  : <FaSortAlphaUp className="me-2" />}
+                Alphabetical (A-Z / ก-ฮ)
+              </Dropdown.Item>
+              <Dropdown.Item 
+                onClick={() => requestSort('created_at')} 
+                active={sortConfig.key === 'created_at'}
+              >
+                {sortConfig.key === 'created_at' && sortConfig.direction === 'asc' 
+                  ? <FaSortNumericDown className="me-2" /> 
+                  : <FaSortNumericUp className="me-2" />}
+                Date Created
+              </Dropdown.Item>
+            </DropdownButton>
+            
+            {/* Bulk Action Dropdown */}
+            <DropdownButton
+              variant={selectedQuizzes.length > 0 ? "primary" : "outline-secondary"}
+              title={
+                <>
+                  <FaTasks className="me-2" />
+                  Bulk Action {selectedQuizzes.length > 0 ? `(${selectedQuizzes.length})` : ""}
+                </>
+              }
+              disabled={selectedQuizzes.length === 0}
+            >
+              <Dropdown.Item 
+                onClick={handleBulkDeleteClick}
+                disabled={selectedQuizzes.length === 0}
+                className="text-danger"
+              >
+                <FaTrashAlt className="me-2" />
+                Delete Selected
+              </Dropdown.Item>
+              <Dropdown.Divider />
+              <Dropdown.Item 
+                onClick={clearAllSelections}
+                disabled={selectedQuizzes.length === 0}
+              >
+                <FaCheckSquare className="me-2" />
+                Clear Selection
+              </Dropdown.Item>
+              {/* Additional bulk actions can be added here */}
+            </DropdownButton>
+          </Col>
+        </Row>
       )}
 
       {/* Loading Spinner */}
@@ -238,18 +496,51 @@ const LibraryPage = () => {
           </Card.Body>
         </Card>
       )}
+      
+      {/* Search Results Info */}
+      {!loading && !error && quizzes.length > 0 && searchTerm && (
+        <div className="mb-3">
+          <p className="text-muted">
+            Showing {filteredQuizzes.length} of {quizzes.length} quizzes for search term: "{searchTerm}"
+          </p>
+        </div>
+      )}
+
+      {/* Select All Checkbox */}
+      {!loading && !error && filteredQuizzes.length > 0 && (
+        <div className="mb-3 d-flex align-items-center">
+          <Form.Check
+            type="checkbox"
+            id="select-all-checkbox"
+            checked={selectAll}
+            onChange={handleSelectAll}
+            label={`Select All (${filteredQuizzes.length})`}
+          />
+        </div>
+      )}
 
       {/* Quizzes List */}
-      {!loading && !error && quizzes.length > 0 && (
+      {!loading && !error && filteredQuizzes.length > 0 && (
         <Row xs={1} md={2} lg={3} className="g-4">
-          {quizzes.map(quiz => (
+          {filteredQuizzes.map(quiz => (
             <Col key={quiz.id}>
-              <Card className="h-100 shadow-sm">
+              <Card className={`h-100 shadow-sm ${selectedQuizzes.includes(quiz.id) ? 'border-primary' : ''}`}>
                 <Card.Body>
-                  <Card.Title className="mb-3">{quiz.title}</Card.Title>
-                  <Card.Subtitle className="mb-3 text-muted">
-                    {quiz.topic}
-                  </Card.Subtitle>
+                  <div className="d-flex justify-content-between align-items-start mb-3">
+                    <Form.Check
+                      type="checkbox"
+                      id={`quiz-checkbox-${quiz.id}`}
+                      checked={selectedQuizzes.includes(quiz.id)}
+                      onChange={() => handleSelectQuiz(quiz.id)}
+                      className="me-2"
+                    />
+                    <div className="flex-grow-1">
+                      <Card.Title>{quiz.title}</Card.Title>
+                      <Card.Subtitle className="mb-3 text-muted">
+                        {quiz.topic}
+                      </Card.Subtitle>
+                    </div>
+                  </div>
 
                   <div className="mb-3">
                     <Badge bg="primary" className="me-2">
@@ -272,8 +563,6 @@ const LibraryPage = () => {
                         <Spinner animation="border" size="sm" className="ms-1" />}
                     </Badge>
                   </div>
-
-
 
                 </Card.Body>
                 <Card.Footer className="bg-white border-top-0">
@@ -313,10 +602,10 @@ const LibraryPage = () => {
       {/* Delete Confirmation Modal */}
       <Modal show={showDeleteModal} onHide={handleCloseDeleteModal} centered>
         <Modal.Header closeButton>
-          <Modal.Title>Delete quiz</Modal.Title>
+          <Modal.Title>Delete Quiz</Modal.Title>
         </Modal.Header>
         <Modal.Body>
-          Are you sure you want to delete the Quiz? "{quizToDelete?.title}"? This action is irreversible.
+          Are you sure you want to delete the quiz "{quizToDelete?.title}"? This action is irreversible.
         </Modal.Body>
         <Modal.Footer>
           <Button variant="secondary" onClick={handleCloseDeleteModal}>
@@ -346,6 +635,42 @@ const LibraryPage = () => {
         </Modal.Footer>
       </Modal>
 
+      {/* Bulk Delete Confirmation Modal */}
+      <Modal show={showBulkDeleteModal} onHide={handleCloseBulkDeleteModal} centered>
+        <Modal.Header closeButton>
+          <Modal.Title>Delete Multiple Quizzes</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          Are you sure you want to delete {selectedQuizzes.length} {selectedQuizzes.length === 1 ? 'quiz' : 'quizzes'}? This action is irreversible.
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={handleCloseBulkDeleteModal}>
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            onClick={handleBulkDeleteQuizzes}
+            disabled={bulkDeleteLoading}
+          >
+            {bulkDeleteLoading ? (
+              <>
+                <Spinner
+                  as="span"
+                  animation="border"
+                  size="sm"
+                  role="status"
+                  aria-hidden="true"
+                  className="me-2"
+                />
+                Deleting...
+              </>
+            ) : (
+              `Delete ${selectedQuizzes.length} ${selectedQuizzes.length === 1 ? 'Quiz' : 'Quizzes'}`
+            )}
+          </Button>
+        </Modal.Footer>
+      </Modal>
+
       {/* Rename Modal */}
       <Modal show={showRenameModal} onHide={handleCloseRenameModal} centered>
         <Modal.Header closeButton>
@@ -354,7 +679,7 @@ const LibraryPage = () => {
         <Form noValidate validated={validated} onSubmit={handleRenameQuiz}>
           <Modal.Body>
             <Form.Group controlId="quizTitle">
-              <Form.Label>New name Quiz</Form.Label>
+              <Form.Label>New Quiz Name</Form.Label>
               <Form.Control
                 type="text"
                 placeholder="Enter a new name for the quiz"
