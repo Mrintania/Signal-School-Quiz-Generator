@@ -1,319 +1,148 @@
-# Signal School Quiz Generator: แพลตฟอร์มสร้างข้อสอบด้วย AI
+# Signal School Quiz Generator: AI-Powered Quiz Creation Platform
 
-แพลตฟอร์มออนไลน์ที่ช่วยอำนวยความสะดวกให้กับครูและอาจารย์ในการสร้างชุดข้อสอบคุณภาพสูงอย่างรวดเร็วและมีประสิทธิภาพ โดยใช้เทคโนโลยี Artificial Intelligence
+## 🌟 Project Overview
 
-## ✨ คุณสมบัติหลัก
+Signal School Quiz Generator is an innovative web application designed to empower educators by leveraging artificial intelligence to create high-quality, customizable quizzes quickly and efficiently. The platform supports multiple question types, language options, and provides a comprehensive quiz management system.
 
-- 🧠 **สร้างข้อสอบด้วย AI**: สร้างข้อสอบคุณภาพสูงจากหัวข้อที่กำหนดโดยใช้ AI
-- 📝 **รองรับหลายรูปแบบข้อสอบ**: สร้างข้อสอบได้ทั้งแบบปรนัยและอัตนัย
-- 📚 **ระบบจัดการคลังข้อสอบ**: จัดเก็บ แก้ไข และจัดการข้อสอบที่สร้างไว้
-- 🎛️ **ปรับแต่งตามความต้องการ**: กำหนดระดับความยากง่าย จำนวนข้อ และคำแนะนำเพิ่มเติมได้
-- ➕ **สร้างข้อสอบเพิ่มเติม**: เพิ่มข้อสอบในชุดเดิมโดยสร้างคำถามที่ไม่ซ้ำกัน
-- 🌐 **หลายภาษา**: รองรับทั้งภาษาไทยและภาษาอังกฤษ
-- 🖨️ **การพิมพ์**: พิมพ์ข้อสอบเพื่อนำไปใช้งาน
+## ✨ Key Features
 
-## 📋 สารบัญ
+- 🤖 **AI-Powered Quiz Generation**: Create professional quizzes instantly using advanced AI technology
+- 🌐 **Multilingual Support**: Generate quizzes in both English and Thai
+- 📝 **Multiple Question Types**: 
+  - Multiple Choice Quizzes
+  - Essay-style Quizzes
+- 📚 **Comprehensive Quiz Management**:
+  - Save and organize quizzes
+  - Edit quiz titles
+  - Export quizzes to various formats
+- 🎛️ **Customization Options**:
+  - Set difficulty levels
+  - Specify student levels
+  - Add custom instructions
+- 🔄 **Dynamic Question Generation**: 
+  - Generate additional questions for existing quizzes
+  - Avoid duplicate questions
+- 📤 **Export Capabilities**:
+  - Export to plain text
+  - Export to Moodle GIFT format
 
-- [ความต้องการของระบบ](#ความต้องการของระบบ)
-- [การติดตั้ง](#การติดตั้ง)
-- [โครงสร้างโปรเจค](#โครงสร้างโปรเจค)
-- [การใช้งาน](#การใช้งาน)
-- [สถาปัตยกรรมระบบ](#สถาปัตยกรรมระบบ)
-- [Flow Chart](#flow-chart)
-- [API Endpoints](#api-endpoints)
-- [การแก้ไขปัญหาเบื้องต้น](#การแก้ไขปัญหาเบื้องต้น)
-- [แผนการพัฒนาในอนาคต](#แผนการพัฒนาในอนาคต)
-- [ทีมงาน](#ทีมงาน)
-- [License](#license)
+## 🖥️ Technology Stack
 
-## 💻 ความต้องการของระบบ
+### Frontend
+- React.js
+- React Router
+- Bootstrap/React-Bootstrap
+- Axios for API communication
 
-### สำหรับ Frontend
-- Node.js (v14 หรือใหม่กว่า)
-- npm หรือ yarn
+### Backend
+- Bun Runtime
+- Express.js
+- MySQL Database
+- Google Gemini AI API
 
-### สำหรับ Backend
-- Bun Runtime (v1.0 หรือใหม่กว่า)
-- MySQL (สามารถใช้ผ่าน XAMPP ได้)
-- Google Gemini API Key (สามารถขอได้จาก [Google AI Studio](https://ai.google.dev/))
+## 🚀 Quick Start
 
-## 🚀 การติดตั้ง
+### Prerequisites
+- Node.js (v14 or newer)
+- Bun Runtime (v1.0 or newer)
+- MySQL
+- Google Gemini API Key
 
-### 1. Clone โปรเจค
+### Installation Steps
 
+1. Clone the repository
 ```bash
-git clone https://github.com/yourusername/quiz-generator-app.git
-cd quiz-generator-app
+git clone https://github.com/yourusername/signal-school-quiz-generator.git
+cd signal-school-quiz-generator
 ```
 
-### 2. ตั้งค่า Backend
-
+2. Set up Backend
 ```bash
-# เข้าสู่โฟลเดอร์ Backend
 cd backend
-
-# ติดตั้ง Dependencies
 bun install
-
-# สร้างไฟล์ .env
 cp .env.example .env
+# Configure .env with your database and API credentials
+bun start
 ```
 
-แก้ไขไฟล์ `.env` ให้มีค่าดังนี้:
+3. Set up Frontend
+```bash
+cd ../frontend
+npm install
+npm start
+```
 
+4. Database Setup
+- Open XAMPP or your MySQL management tool
+- Create a database named `quiz_generator`
+- Import the database schema from `database/database.sql`
+
+## 🔧 Configuration
+
+### Environment Variables
+Create a `.env` file in the backend directory with the following configurations:
 ```
 # Database Configuration
 DB_HOST=localhost
-DB_USER=root
-DB_PASSWORD=
+DB_USER=your_username
+DB_PASSWORD=your_password
 DB_NAME=quiz_generator
 
 # Google Gemini Configuration
-GOOGLE_GEMINI_API_KEY=your_gemini_api_key
+GOOGLE_GEMINI_API_KEY=your_api_key
 
 # Server Configuration
 PORT=5000
 ```
 
-### 3. ตั้งค่าฐานข้อมูล
-
-1. เปิด XAMPP และเริ่มการทำงานของ Apache และ MySQL
-2. เปิดเบราว์เซอร์แล้วเข้าไปที่ http://localhost/phpmyadmin/
-3. สร้างฐานข้อมูลใหม่ชื่อ `quiz_generator`
-4. นำเข้าไฟล์ SQL จากโฟลเดอร์ `database/database.sql`
-
-### 4. รัน Backend
-
-```bash
-# รัน Backend Server
-bun start
-```
-
-### 5. ตั้งค่า Frontend
-
-```bash
-# เข้าสู่โฟลเดอร์ Frontend
-cd ../frontend
-
-# ติดตั้ง Dependencies
-npm install
-```
-
-### 6. รัน Frontend
-
-```bash
-# รัน Frontend Development Server
-npm start
-```
-
-เปิดเบราว์เซอร์แล้วเข้าไปที่ http://localhost:3000/ เพื่อใช้งานแอปพลิเคชัน
-
-## 📁 โครงสร้างโปรเจค
+## 📋 Project Structure
 
 ```
-quiz-generator-app/
+signal-school-quiz-generator/
 ├── backend/
-│   ├── .env                   # ไฟล์สภาพแวดล้อม (environment variables)
-│   ├── index.js               # Entry point ของ backend
-│   ├── package.json           # ไฟล์จัดการแพคเกจของ backend
-│   └── src/
-│       ├── config/
-│       │   └── db.js          # การตั้งค่าเชื่อมต่อฐานข้อมูล
-│       ├── controllers/
-│       │   └── quizController.js  # ตัวควบคุมสำหรับจัดการข้อสอบ
-│       ├── models/
-│       │   └── quiz.js        # โมเดลสำหรับจัดการข้อมูลข้อสอบ
-│       └── routes/
-│           └── quizRoutes.js  # กำหนดเส้นทาง API
+│   ├── src/
+│   │   ├── config/     # Database configuration
+│   │   ├── controllers/# Request handlers
+│   │   ├── models/     # Data models
+│   │   └── routes/     # API route definitions
+│   └── index.js        # Server entry point
 │
-├── database/
-│   └── database.sql           # ไฟล์ SQL สำหรับสร้างฐานข้อมูล
+├── frontend/
+│   ├── src/
+│   │   ├── components/ # Reusable React components
+│   │   ├── context/    # React context providers
+│   │   ├── pages/      # Page components
+│   │   ├── services/   # API service methods
+│   │   └── translations/ # Multilingual support
+│   └── public/         # Static assets
 │
-└── frontend/
-    ├── public/
-    │   ├── index.html         # HTML หลัก
-    │   ├── favicon.ico        # ไอคอนเว็บไซต์
-    │   └── ...                # ไฟล์ public อื่นๆ
-    ├── package.json           # ไฟล์จัดการแพคเกจของ frontend
-    └── src/
-        ├── App.css            # CSS หลักของแอป
-        ├── App.js             # คอมโพเนนต์หลักของแอป
-        ├── index.js           # Entry point ของ React
-        ├── assets/
-        │   └── logo.png       # โลโก้และรูปภาพอื่นๆ
-        ├── components/
-        │   ├── Layout.js      # คอมโพเนนต์โครงสร้างหลัก
-        │   ├── Navbar.js      # คอมโพเนนต์แถบนำทางด้านบน
-        │   ├── Sidebar.js     # คอมโพเนนต์แถบด้านข้าง
-        │   └── LanguageSelector.js # คอมโพเนนต์เลือกภาษา
-        ├── context/
-        │   ├── QuizContext.js # Context API สำหรับข้อมูลข้อสอบ
-        │   └── LanguageContext.js # Context API สำหรับจัดการภาษา
-        ├── hooks/
-        │   └── useTranslation.js # Hook สำหรับการแปลภาษา
-        ├── pages/
-        │   ├── HomePage.js            # หน้าหลัก
-        │   ├── CreateQuizPage.js      # หน้าสร้างข้อสอบใหม่
-        │   ├── QuizResultPage.js      # หน้าแสดงผลข้อสอบที่สร้าง
-        │   ├── LibraryPage.js         # หน้าคลังข้อสอบที่บันทึกไว้
-        │   └── ViewQuizPage.js        # หน้าดูรายละเอียดข้อสอบ
-        ├── services/
-        │   └── api.js                 # บริการเชื่อมต่อกับ API
-        └── translations/
-            ├── en.js                  # การแปลภาษาอังกฤษ
-            └── th.js                  # การแปลภาษาไทย
+└── database/
+    └── database.sql    # Database schema
 ```
 
-## 🎮 การใช้งาน
+## 🔮 Future Roadmap
 
-### 1. หน้าหลัก (Home)
-- แสดงภาพรวมของแอปพลิเคชันและตัวเลือกในการสร้างข้อสอบใหม่หรือดูคลังข้อสอบ
-- มีปุ่มสำหรับเลือกภาษาที่แถบนำทางด้านบน
+1. User Authentication System
+2. Advanced Quiz Sharing Capabilities
+3. Online Exam Platform Integration
+4. Comprehensive Student Performance Analytics
+5. Content Import from Documents
+6. Additional Language Support
 
-### 2. สร้างข้อสอบใหม่ (Create Quiz)
-- กรอกหัวข้อข้อสอบ
-- เลือกประเภทข้อสอบ (ปรนัยหรืออัตนัย)
-- กำหนดจำนวนข้อสอบ
-- เพิ่มคำแนะนำเพิ่มเติม (ถ้ามี)
-- ระบุระดับของผู้เรียน (ถ้ามี)
-- กดปุ่ม "สร้างข้อสอบ" เพื่อให้ AI สร้างข้อสอบตามที่กำหนด
+## 👨‍💻 About the Developer
 
-### 3. ผลลัพธ์ข้อสอบ (Quiz Result)
-- แสดงข้อสอบที่สร้างโดย AI
-- สำหรับข้อสอบปรนัย จะแสดงตัวเลือกและเฉลยคำตอบที่ถูกต้อง
-- สามารถกด "สร้างข้อสอบเพิ่มอีก 10 ข้อ" เพื่อเพิ่มข้อสอบในชุดเดียวกัน
-- กดปุ่ม "บันทึกข้อสอบ" เพื่อบันทึกลงในระบบ
-
-### 4. คลังข้อสอบ (My Library)
-- แสดงรายการข้อสอบที่เคยสร้างและบันทึกไว้
-- สามารถดู แก้ไขชื่อ หรือลบข้อสอบได้
-
-### 5. ดูข้อสอบ (View Quiz)
-- แสดงรายละเอียดของข้อสอบที่เลือก
-- สามารถพิมพ์ข้อสอบได้
-
-## 🏗️ สถาปัตยกรรมระบบ
-
-ระบบถูกพัฒนาด้วยเทคโนโลยีทันสมัย แบ่งเป็นส่วนหลักๆ ดังนี้:
-
-### Frontend
-- **Framework**: React.js
-- **UI Library**: Bootstrap/React-Bootstrap
-- **State Management**: React Context API
-- **Routing**: React Router Dom
-- **Language Support**: Custom Translation System
-- **Styling**: CSS, Bootstrap
-
-### Backend
-- **Runtime**: Bun
-- **Framework**: Express.js
-- **Database**: MySQL 
-- **API Integration**: Google Gemini API
-
-## 📊 Flow Chart
-
-### Flow การทำงานหลักของระบบ
-
-```
-┌───────────────────────┐     ┌─────────────────────────┐     ┌───────────────────────┐
-│                       │     │                         │     │                       │
-│    หน้าหลัก (Home)     │────▶│ สร้างข้อสอบ (Create Quiz) │────▶│ ผลลัพธ์ข้อสอบ (Result)  │
-│                       │     │                         │     │                       │
-└───────────────────────┘     └─────────────────────────┘     └───────────┬───────────┘
-          ▲                                                               │
-          │                                                               │
-          │                                                               ▼
-┌───────────────────────┐                                     ┌───────────────────────┐
-│                       │                                     │                       │
-│ คลังข้อสอบ (Library)   │◀────────────────────────────────────│  บันทึกข้อสอบ (Save)   │
-│                       │                                     │                       │
-└───────────┬───────────┘                                     └───────────────────────┘
-            │
-            │
-            ▼
-┌───────────────────────┐
-│                       │
-│  ดูข้อสอบ (View Quiz)  │
-│                       │
-└───────────────────────┘
-```
-
-### Flow การสร้างข้อสอบ
-
-```
-┌──────────────┐     ┌──────────────┐     ┌────────────────┐     ┌────────────────┐
-│              │     │              │     │                │     │                │
-│  กรอกข้อมูล   │────▶│  ส่งข้อมูลไป  │────▶│  AI วิเคราะห์   │────▶│  แสดงข้อสอบ   │
-│  หัวข้อข้อสอบ  │     │  Backend    │     │  และสร้างข้อสอบ  │     │  ที่สร้างแล้ว  │
-│              │     │              │     │                │     │                │
-└──────────────┘     └──────────────┘     └────────────────┘     └────────┬───────┘
-                                                                          │
-                                                                          │
-                     ┌──────────────┐     ┌────────────────┐              │
-                     │              │     │                │              │
-                     │  บันทึกลงใน   │◀────┤   บันทึกชื่อ    │◀─────────────┘
-                     │  ฐานข้อมูล    │     │   ข้อสอบ       │
-                     │              │     │                │
-                     └──────────────┘     └────────────────┘
-```
-
-### Flow การใช้งานภาษา
-
-```
-┌──────────────┐     ┌──────────────┐     ┌────────────────┐
-│              │     │              │     │                │
-│  ผู้ใช้เลือก   │────▶│  บันทึกค่า    │────▶│  แสดงเนื้อหา    │
-│  ภาษา        │     │  ในระบบ      │     │  ตามภาษาที่เลือก │
-│              │     │              │     │                │
-└──────────────┘     └──────────────┘     └────────────────┘
-```
-
-## 🔌 API Endpoints
-
-### ข้อสอบ (Quizzes)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/quizzes` | ดึงข้อมูลข้อสอบทั้งหมด |
-| GET | `/api/quizzes/:id` | ดึงข้อมูลข้อสอบตาม ID |
-| POST | `/api/quizzes/generate` | สร้างข้อสอบใหม่ด้วย AI |
-| POST | `/api/quizzes/save` | บันทึกข้อสอบลงในฐานข้อมูล |
-| PATCH | `/api/quizzes/:id/rename` | เปลี่ยนชื่อข้อสอบ |
-| DELETE | `/api/quizzes/:id` | ลบข้อสอบ |
-
-## 🔧 การแก้ไขปัญหาเบื้องต้น
-
-### Backend ไม่สามารถเริ่มต้นได้
-- ตรวจสอบว่าได้ติดตั้ง Bun runtime แล้ว
-- ตรวจสอบไฟล์ `.env` ว่ามีการกำหนดค่าถูกต้อง
-- ตรวจสอบว่าพอร์ตที่กำหนดใน `.env` ไม่ถูกใช้งานโดยโปรแกรมอื่น
-
-### ไม่สามารถสร้างข้อสอบได้
-- ตรวจสอบการเชื่อมต่ออินเทอร์เน็ต
-- ตรวจสอบว่า Google Gemini API Key ถูกต้องและยังไม่หมดอายุ
-- ตรวจสอบว่าหัวข้อและข้อมูลอื่นๆ ที่กรอกถูกต้อง
-
-### ไม่สามารถบันทึกข้อสอบได้
-- ตรวจสอบการเชื่อมต่อกับฐานข้อมูล
-- ตรวจสอบว่าโครงสร้างฐานข้อมูลถูกต้อง
-
-### Frontend แสดงผลไม่ถูกต้อง
-- ตรวจสอบว่า API URL ในไฟล์ `src/services/api.js` ตรงกับที่อยู่ของ Backend
-- ล้างแคชของเบราว์เซอร์และรีเฟรชหน้า
-
-## 🔮 แผนการพัฒนาในอนาคต
-
-1. **ระบบสมาชิก**: เพิ่มระบบลงทะเบียนและเข้าสู่ระบบสำหรับครูและอาจารย์
-2. **แชร์ข้อสอบ**: อนุญาตให้แชร์ข้อสอบระหว่างผู้ใช้ได้
-3. **ระบบสอบออนไลน์**: เพิ่มความสามารถในการสร้างการสอบออนไลน์และให้นักเรียนทำข้อสอบผ่านระบบ
-4. **วิเคราะห์ผลสอบ**: เพิ่มการวิเคราะห์ผลการทำข้อสอบของนักเรียนแบบกลุ่มและรายบุคคล
-5. **การนำเข้าเนื้อหา**: อนุญาตให้อัปโหลดเอกสารเพื่อสร้างข้อสอบจากเนื้อหาเฉพาะ
-6. **เพิ่มภาษา**: รองรับภาษาเพิ่มเติม เช่น จีน ญี่ปุ่น เกาหลี
-
-## 👨‍💻 ทีมงาน
-
-- Sgt.Pornsupat Vutisuwan - Main Developer
+**Sgt. Pornsupat Vutisuwan**
+- Main Developer and Creator of Signal School Quiz Generator
 
 ## 📄 License
 
-โปรเจคนี้อยู่ภายใต้ [MIT License](./LICENSE)
+This project is licensed under the MIT License. See the LICENSE file for details.
+
+## 🆘 Support and Feedback
+
+Found a bug? Have a suggestion? Please open an issue on our GitHub repository.
+
+## 💡 Powered By
+- Artificial Intelligence
+- Open-source Community
+- Passion for Educational Technology
