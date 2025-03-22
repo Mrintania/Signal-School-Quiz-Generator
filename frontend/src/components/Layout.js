@@ -3,23 +3,43 @@ import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Navbar from './Navbar';
 
-// ปรับปรุง Layout ให้รองรับ Outlet สำหรับการใช้งานกับ createBrowserRouter
-const Layout = ({ children }) => {
+const Layout = () => {
+  // กำหนดความกว้างของ Sidebar คงที่
+  const SIDEBAR_WIDTH = 250; // px
+  
   return (
     <div className="d-flex">
-      <Sidebar />
+      {/* Sidebar ด้านซ้าย - กำหนดความกว้างคงที่ */}
+      <div 
+        className="sidebar-wrapper"
+        style={{ 
+          width: `${SIDEBAR_WIDTH}px`, 
+          flexShrink: 0,
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          height: '100vh',
+          zIndex: 1030
+        }}
+      >
+        <Sidebar />
+      </div>
+      
+      {/* พื้นที่หลักด้านขวา - ความกว้างจะเป็นส่วนที่เหลือ */}
       <div 
         className="content-wrapper" 
         style={{ 
-          flexGrow: 1,
-          marginLeft: '70px', // Same as collapsed sidebar width
-          transition: 'margin-left 0.3s ease'
+          width: `calc(100% - ${SIDEBAR_WIDTH}px)`,
+          marginLeft: `${SIDEBAR_WIDTH}px`,
+          minHeight: '100vh'
         }}
       >
+        {/* Navbar จะอยู่ด้านบนของพื้นที่หลัก */}
         <Navbar />
-        <main className="px-3 py-3">
-          {/* ใช้ children หรือ Outlet ขึ้นอยู่กับว่าคุณเลือกวิธีไหน */}
-          {children || <Outlet />}
+        
+        {/* เนื้อหาหลัก */}
+        <main className="py-3 px-4">
+          <Outlet />
         </main>
       </div>
     </div>

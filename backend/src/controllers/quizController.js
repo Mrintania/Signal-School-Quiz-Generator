@@ -20,11 +20,11 @@ class QuizController {
       // สร้าง prompt สำหรับ Google Gemini API
       const prompt = QuizController.createPrompt(topic, questionType, numberOfQuestions, additionalInstructions, studentLevel, language);
 
-      // เลือกโมเดล และตั้งค่าพารามิเตอร์
+      // เลือกโมเดล และตั้งค่าพารามิเตอร
       const model = genAI.getGenerativeModel({
-        model: "gemini-2.0-flash", // ใช้โมเดลตามที่คุณระบุ
+        model: "gemini-2.0-flash", // ใช้โมเดลตามที่คุณระบุ gemini-2.0-flash-thinking-exp-01-21, gemini-2.0-pro-exp-02-05
         generationConfig: {
-          temperature: 0.7,
+          temperature: 1,
           maxOutputTokens: 8192,
         },
       });
