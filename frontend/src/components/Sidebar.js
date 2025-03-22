@@ -52,11 +52,15 @@ const Sidebar = () => {
             <div className="d-flex align-items-center gap-2">
               <Image 
                 src={require('../assets/logo.png')} 
-                alt="EdCafe Logo" 
+                alt="Logo" 
                 width="36" 
-                height="36" 
+                height="36"
+                // Adjust the logo to center
+                style={{ marginLeft: 'auto', marginRight: 'auto' }}
+                
               />
-              <span className="fw-bold fs-4">edcafe</span>
+              
+              {/* <span className="fw-bold fs-4">edcafe</span> */}
             </div>
           </Link>
         </div>

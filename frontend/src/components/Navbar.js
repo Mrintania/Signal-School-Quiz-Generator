@@ -1,21 +1,55 @@
-import React, { useState } from 'react';
+// 1. First, modify the NavBar.js component:
+
+import React, { useState, useEffect } from 'react';
 import { Navbar, Container, Dropdown } from 'react-bootstrap';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
+import { quizService } from '../services/api';
 
 const NavbarComponent = () => {
   const location = useLocation();
+  const params = useParams();
+  const [quizTitle, setQuizTitle] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   
-  // สร้างตัวแปรจำลองข้อมูลผู้ใช้งาน (ในอนาคตอาจดึงจาก API หรือ Context)
+  // Create state variable for user (same as original)
   const [user, setUser] = useState({
     isLoggedIn: true,
     name: 'Pornsupat Vutisuwan',
-    // subscription: 'Free',
     profile: {
       initial: 'P',
-      image: null, // ในกรณีที่มีรูปภาพโปรไฟล์
-      color: '#A8A8A8' // สีพื้นหลังอักษรย่อชื่อ
+      image: null,
+      color: '#A8A8A8'
     }
   });
+
+  // Add effect to fetch quiz title when on view quiz page
+  useEffect(() => {
+    const fetchQuizTitle = async () => {
+      // Check if we're on a quiz view page (URL contains /view/ and an ID)
+      if (location.pathname.includes('/view/')) {
+        try {
+          setIsLoading(true);
+          const quizId = location.pathname.split('/view/')[1];
+          
+          // Fetch quiz data to get title
+          const response = await quizService.getQuizById(quizId);
+          
+          if (response.success) {
+            setQuizTitle(response.data.title);
+          }
+        } catch (error) {
+          console.error('Error fetching quiz title:', error);
+        } finally {
+          setIsLoading(false);
+        }
+      } else {
+        // Reset title when not on a quiz page
+        setQuizTitle('');
+      }
+    };
+    
+    fetchQuizTitle();
+  }, [location.pathname]);
 
   return (
     <Navbar 
@@ -27,8 +61,9 @@ const NavbarComponent = () => {
       }}
     >
       <Container fluid className="d-flex justify-content-between align-items-center">
-        {/* ส่วนซ้าย - แสดงชื่อหน้าปัจจุบัน */}
+        {/* Left side - show current page/quiz title */}
         <div className="d-flex align-items-center">
+          {/* Home page */}
           {location.pathname === '/' && (
             <div className="d-flex align-items-center">
               <svg 
@@ -46,6 +81,7 @@ const NavbarComponent = () => {
             </div>
           )}
 
+          {/* Library page */}
           {location.pathname === '/library' && (
             <div className="d-flex align-items-center">
               <svg 
@@ -62,6 +98,74 @@ const NavbarComponent = () => {
             </div>
           )}
 
+          {/* Create quiz page */}
+          {location.pathname === '/create' && (
+            <div className="d-flex align-items-center">
+              <svg 
+                xmlns="http://www.w3.org/2000/svg" 
+                width="18" 
+                height="18" 
+                fill="currentColor" 
+                viewBox="0 0 16 16"
+                className="me-2 text-primary d-none d-sm-block"
+              >
+                <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+                <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
+              </svg>
+              <span className="fw-medium fs-6">Create New Quiz</span>
+            </div>
+          )}
+
+          {/* Quiz View page - Show breadcrumb with quiz title */}
+          {location.pathname.includes('/view/') && (
+            <div className="d-flex align-items-center">
+              {/* Library icon with link */}
+              <Link to="/library" className="text-decoration-none text-dark">
+                <div className="d-flex align-items-center">
+                  <svg 
+                    xmlns="http://www.w3.org/2000/svg" 
+                    width="18" 
+                    height="18" 
+                    fill="currentColor" 
+                    viewBox="0 0 16 16"
+                    className="me-2 text-primary d-none d-sm-block"
+                  >
+                    <path d="M2.5 3.5a.5.5 0 0 1 0-1h11a.5.5 0 0 1 0 1h-11zm2-2a.5.5 0 0 1 0-1h7a.5.5 0 0 1 0 1h-7zM0 13a1.5 1.5 0 0 0 1.5 1.5h13A1.5 1.5 0 0 0 16 13V6a1.5 1.5 0 0 0-1.5-1.5h-13A1.5 1.5 0 0 0 0 6v7zm1.5.5A.5.5 0 0 1 1 13V6a.5.5 0 0 1 .5-.5h13a.5.5 0 0 1 .5.5v7a.5.5 0 0 1-.5.5h-13z"/>
+                  </svg>
+                  <span className="fw-medium fs-6">My Library</span>
+                </div>
+              </Link>
+              
+              {/* Separator */}
+              <span className="mx-2 text-muted">/</span>
+              
+              {/* Quiz icon and title */}
+              <div className="d-flex align-items-center">
+                <svg 
+                  xmlns="http://www.w3.org/2000/svg" 
+                  width="18" 
+                  height="18" 
+                  fill="#F19158" 
+                  viewBox="0 0 16 16"
+                  className="me-2 d-none d-sm-block"
+                >
+                  <path d="M14 1a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h12zM2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H2z"/>
+                  <path d="M10.97 4.97a.75.75 0 0 1 1.071 1.05l-3.992 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.235.235 0 0 1 .02-.022z"/>
+                </svg>
+                {isLoading ? (
+                  <span className="fw-medium fs-6 text-truncate" style={{ maxWidth: '300px' }}>
+                    Loading...
+                  </span>
+                ) : (
+                  <span className="fw-medium fs-6 text-truncate" style={{ maxWidth: '300px' }}>
+                    {quizTitle}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Other routes handling remains the same */}
           {location.pathname === '/recent' && (
             <div className="d-flex align-items-center">
               <svg 
@@ -94,26 +198,9 @@ const NavbarComponent = () => {
               <span className="fw-medium fs-6">Account</span>
             </div>
           )}
-
-          {location.pathname === '/create' && (
-            <div className="d-flex align-items-center">
-              <svg 
-                xmlns="http://www.w3.org/2000/svg" 
-                width="18" 
-                height="18" 
-                fill="currentColor" 
-                viewBox="0 0 16 16"
-                className="me-2 text-primary d-none d-sm-block"
-              >
-                <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
-                <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
-              </svg>
-              <span className="fw-medium fs-6">Create New Quiz</span>
-            </div>
-          )}
         </div>
 
-        {/* ส่วนขวา - ข้อมูลผู้ใช้งาน */}
+        {/* Right side - user profile (unchanged) */}
         <div className="d-flex align-items-center">
           {user.isLoggedIn ? (
             <Dropdown align="end">
@@ -129,7 +216,6 @@ const NavbarComponent = () => {
                 </div>
                 
                 {user.profile.image ? (
-                  // ถ้ามีรูปโปรไฟล์
                   <img 
                     src={user.profile.image}
                     width="36"
@@ -138,7 +224,6 @@ const NavbarComponent = () => {
                     alt={user.name}
                   />
                 ) : (
-                  // ถ้าไม่มีรูปโปรไฟล์ ใช้อักษรย่อแทน
                   <div 
                     className="d-flex align-items-center justify-content-center rounded-circle text-white"
                     style={{ 
@@ -168,7 +253,6 @@ const NavbarComponent = () => {
               </Dropdown.Menu>
             </Dropdown>
           ) : (
-            // กรณียังไม่ได้ล็อกอิน
             <div>
               <Link to="/login" className="btn btn-outline-success me-2">เข้าสู่ระบบ</Link>
               <Link to="/register" className="btn btn-success">สมัครสมาชิก</Link>

@@ -40,6 +40,7 @@ const LibraryPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
+  const [openDropdownId, setOpenDropdownId] = useState(null);
 
   // State สำหรับข้อมูลหลัก
   const [quizzes, setQuizzes] = useState([]);
@@ -147,6 +148,19 @@ const LibraryPage = () => {
       }));
     });
   }, [fetchData]);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (openDropdownId && !event.target.closest('.dropdown-menu') && !event.target.closest('.dropdown-toggle')) {
+        setOpenDropdownId(null);
+      }
+    };
+  
+    document.addEventListener('click', handleClickOutside);
+    return () => {
+      document.removeEventListener('click', handleClickOutside);
+    };
+  }, [openDropdownId]);
 
   // ฟังก์ชันเปลี่ยนชื่อโฟลเดอร์
   const handleRenameFolder = () => {
@@ -367,6 +381,8 @@ const LibraryPage = () => {
     // ปิด modal
     setShowCreateFolderModal(false);
   };
+
+
 
   // ฟังก์ชันสำหรับเปิดหน้าดูข้อสอบ
   const handleViewQuiz = (quizId) => {
