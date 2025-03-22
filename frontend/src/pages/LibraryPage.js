@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Container, Row, Col, Card, Button, Form, InputGroup, Dropdown, Table, Modal, Badge } from 'react-bootstrap';
-import { Link, useNavigate } from 'react-router-dom';
+import { Container, Row, Col, Card, Button, Form, InputGroup, Dropdown, Table, Modal, Badge, Alert } from 'react-bootstrap';
+import { Link, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { quizService } from '../services/api';
 
 // ไอคอน SVG สำหรับใช้ในหน้า
@@ -38,6 +38,8 @@ const ThreeDotsIcon = () => (
 
 const LibraryPage = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
   
   // State สำหรับข้อมูลหลัก
   const [quizzes, setQuizzes] = useState([]);
@@ -78,25 +80,33 @@ const LibraryPage = () => {
     try {
       setLoading(true);
       
-      // สมมติว่ามี API สำหรับดึงข้อมูลโฟลเดอร์
-      // ในที่นี้จะจำลองข้อมูลโฟลเดอร์ไว้ก่อน
-      const mockFolders = [
-        { id: 'root', name: 'My Library', color: '#F9E852', parentId: null },
-        // สามารถเพิ่มโฟลเดอร์อื่นๆ ได้ตามต้องการ
-      ];
+      // ดึงข้อมูลโฟลเดอร์จาก localStorage
+      const storedFolders = JSON.parse(localStorage.getItem('folders') || '[]');
+      
+      // ถ้าไม่มีโฟลเดอร์ root ให้สร้างขึ้นมา
+      if (!storedFolders.find(folder => folder.id === 'root')) {
+        storedFolders.push({
+          id: 'root',
+          name: 'My Library',
+          color: '#F9E852',
+          parentId: null
+        });
+        localStorage.setItem('folders', JSON.stringify(storedFolders));
+      }
+      
+      setFolders(storedFolders);
       
       // ดึงข้อมูลข้อสอบจาก API จริง
       const response = await quizService.getAllQuizzes();
       
       if (response.success) {
-        // เพิ่ม field folderId ให้กับทุก quiz (ตอนนี้ให้เป็น root ทั้งหมด)
+        // เพิ่ม field folderId ให้กับทุก quiz (ถ้ายังไม่มี)
         const quizzesWithFolder = response.data.map(quiz => ({
           ...quiz,
-          folderId: 'root' // เริ่มต้นให้อยู่ใน root folder
+          folderId: quiz.folderId || 'root' // ถ้าไม่มี folderId ให้เป็น root
         }));
         
         setQuizzes(quizzesWithFolder);
-        setFolders(mockFolders);
       } else {
         setError(response.message || 'Failed to fetch quizzes');
       }
@@ -112,6 +122,36 @@ const LibraryPage = () => {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+  
+  // อ่านค่า folder จาก URL เมื่อมีการเปลี่ยนแปลง URL
+  useEffect(() => {
+    const folderParam = searchParams.get('folder');
+    if (folderParam) {
+      setCurrentFolder(folderParam);
+    } else {
+      // ถ้าไม่มีพารามิเตอร์ folder ให้กลับไปที่ root
+      setCurrentFolder('root');
+    }
+  }, [searchParams]);
+  
+  // เพิ่ม event listener สำหรับ storage changes (เมื่อมีการเปลี่ยนแปลงใน localStorage)
+  useEffect(() => {
+    const handleStorageChange = (e) => {
+      if (e.key === 'folders') {
+        // โหลดโฟลเดอร์ใหม่จาก localStorage
+        const storedFolders = JSON.parse(localStorage.getItem('folders') || '[]');
+        setFolders(storedFolders);
+      }
+    };
+    
+    // เพิ่ม event listener
+    window.addEventListener('storage', handleStorageChange);
+    
+    // ทำความสะอาด
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, []);
 
   // กรองข้อมูลตามคำค้นหาและโฟลเดอร์ปัจจุบัน
   const filteredQuizzes = quizzes.filter(quiz => {
@@ -138,6 +178,14 @@ const LibraryPage = () => {
       direction = 'desc';
     }
     setSortConfig({ key, direction });
+  };
+  
+  // ฟังก์ชันสำหรับเปลี่ยนโฟลเดอร์ปัจจุบัน
+  const changeFolder = (folderId) => {
+    setCurrentFolder(folderId);
+    
+    // ล้างการค้นหา
+    setSearchTerm('');
   };
   
   // เรียงลำดับข้อมูล
@@ -196,9 +244,12 @@ const LibraryPage = () => {
     setFolders(prevFolders => [...prevFolders, newFolder]);
     
     // ส่งข้อมูลไปยัง localStorage เพื่อให้ Sidebar เข้าถึงได้
-    // (ในระบบจริงควรใช้ Context API หรือ Redux แทน)
     const storedFolders = JSON.parse(localStorage.getItem('folders') || '[]');
-    localStorage.setItem('folders', JSON.stringify([...storedFolders, newFolder]));
+    const updatedFolders = [...storedFolders, newFolder];
+    localStorage.setItem('folders', JSON.stringify(updatedFolders));
+    
+    // สร้าง event เพื่อแจ้งการเปลี่ยนแปลง localStorage
+    window.dispatchEvent(new Event('storage'));
     
     // รีเซ็ต state สำหรับสร้างโฟลเดอร์
     setNewFolderName('');
@@ -314,7 +365,8 @@ const LibraryPage = () => {
           setQuizzes(prevQuizzes => [...prevQuizzes, newQuiz]);
           
           // แสดงข้อความสำเร็จ (ถ้าต้องการ)
-          // alert('Quiz copied successfully!');
+          setError(`Quiz "${selectedQuiz.title}" copied successfully!`);
+          setTimeout(() => setError(null), 3000);
         } else {
           setError(response.message || 'Failed to copy quiz');
         }
@@ -329,7 +381,8 @@ const LibraryPage = () => {
         );
         
         // แสดงข้อความสำเร็จ (ถ้าต้องการ)
-        // alert('Quiz moved successfully!');
+        setError(`Quiz "${selectedQuiz.title}" moved successfully!`);
+        setTimeout(() => setError(null), 3000);
       }
     } catch (error) {
       console.error('Error moving/copying quiz:', error);
@@ -393,6 +446,23 @@ const LibraryPage = () => {
         </Col>
       </Row>
 
+      {/* แสดงชื่อโฟลเดอร์ปัจจุบัน */}
+      {currentFolder !== 'root' && (
+        <div className="mb-3">
+          <Button 
+            variant="link" 
+            className="p-0 text-decoration-none"
+            onClick={() => changeFolder('root')}
+          >
+            My Library
+          </Button>
+          <span className="mx-2">/</span>
+          <span className="fw-bold">
+            {folders.find(f => f.id === currentFolder)?.name || 'Unknown folder'}
+          </span>
+        </div>
+      )}
+
       {/* ช่องค้นหาและปุ่มสร้าง */}
       <Row className="mb-4 align-items-center">
         <Col md={6} lg={4}>
@@ -425,6 +495,13 @@ const LibraryPage = () => {
           </Link>
         </Col>
       </Row>
+
+      {/* Error Message */}
+      {error && (
+        <Alert variant="info" onClose={() => setError(null)} dismissible>
+          {error}
+        </Alert>
+      )}
 
       {/* ตารางแสดงข้อมูล */}
       <Card className="border-0 shadow-sm">
@@ -472,7 +549,7 @@ const LibraryPage = () => {
                   // โฟลเดอร์
                   return (
                     <tr key={`folder-${item.id}`} 
-                        onClick={() => setCurrentFolder(item.id)}
+                        onClick={() => changeFolder(item.id)}
                         style={{ cursor: 'pointer' }}>
                       <td className="ps-4">
                         <div className="d-flex align-items-center">
@@ -591,11 +668,20 @@ const LibraryPage = () => {
               })}
 
               {/* แสดงข้อความถ้าไม่มีข้อมูล */}
-              {filteredFolders.length === 0 && filteredQuizzes.length === 0 && (
+              {sortedItems.length === 0 && (
                 <tr>
                   <td colSpan="4" className="text-center py-5">
                     <p className="mb-0">ไม่พบข้อมูลในโฟลเดอร์นี้</p>
                     {searchTerm && <p className="text-muted">ลองค้นหาด้วยคำค้นอื่น</p>}
+                    {currentFolder !== 'root' && (
+                      <Button 
+                        variant="link" 
+                        onClick={() => changeFolder('root')}
+                        className="mt-2"
+                      >
+                        กลับไปที่ My Library
+                      </Button>
+                    )}
                   </td>
                 </tr>
               )}
