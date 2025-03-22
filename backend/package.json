@@ -1,9 +1,10 @@
 {
   "name": "backend",
-  "module": "index.ts",
+  "module": "index.js",
   "type": "module",
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "nodemon": "^3.0.1"
   },
   "peerDependencies": {
     "typescript": "^5.0.0"
@@ -14,11 +15,19 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "express-rate-limit": "^7.1.5",
+    "express-validator": "^7.0.1",
+    "helmet": "^7.1.0",
+    "hpp": "^0.2.3",
+    "jsonwebtoken": "^9.0.2",
     "mysql2": "^3.13.0",
-    "openai": "^4.87.3"
+    "openai": "^4.87.3",
+    "winston": "^3.11.0",
+    "xss-clean": "^0.1.4"
   },
   "scripts": {
     "start": "bun run index.js",
-    "dev": "bun --watch index.js"
+    "dev": "bun --watch index.js",
+    "debug": "bun --inspect --watch index.js"
   }
 }

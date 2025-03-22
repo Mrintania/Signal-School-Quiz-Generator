@@ -1,15 +1,31 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import Quiz from '../models/quiz.js';
 
-// ตั้งค่า Google Gemini API
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY);
+// Initialize Google Gemini API with error handling
+let genAI;
+try {
+  genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY);
+} catch (error) {
+  console.error('Error initializing Google Gemini API:', error);
+}
+
+// Helper function to handle API errors
+const handleApiError = (res, error, message = 'An error occurred') => {
+  console.error(`API Error: ${message}`, error);
+  return res.status(500).json({
+    success: false,
+    message: message,
+    error: process.env.NODE_ENV === 'development' ? error.message : undefined
+  });
+};
 
 class QuizController {
-  // สร้างข้อสอบใหม่ด้วย Google Gemini API
+  // Generate a new quiz using Google Gemini API
   static async generateQuiz(req, res) {
     try {
       const { topic, questionType, numberOfQuestions, additionalInstructions, studentLevel, language } = req.body;
 
+      // Validate required fields (additional protection beyond middleware)
       if (!topic || !questionType || !numberOfQuestions) {
         return res.status(400).json({
           success: false,
@@ -17,69 +33,94 @@ class QuizController {
         });
       }
 
-      // สร้าง prompt สำหรับ Google Gemini API
+      // Check if Google Gemini API is initialized
+      if (!genAI) {
+        return res.status(500).json({
+          success: false,
+          message: 'AI service is currently unavailable'
+        });
+      }
+
+      // Create prompt for Google Gemini API
       const prompt = QuizController.createPrompt(topic, questionType, numberOfQuestions, additionalInstructions, studentLevel, language);
 
-      // เลือกโมเดล และตั้งค่าพารามิเตอร
+      // Select model and set parameters
       const model = genAI.getGenerativeModel({
-        model: "gemini-2.0-flash", // ใช้โมเดลตามที่คุณระบุ gemini-2.0-flash-thinking-exp-01-21, gemini-2.0-pro-exp-02-05
+        model: "gemini-2.0-flash", // Use specified model
         generationConfig: {
           temperature: 1,
           maxOutputTokens: 8192,
         },
       });
 
-      // เรียกใช้ Google Gemini API
-      const result = await model.generateContent(prompt);
+      // Request generation with timeout handling
+      const generationPromise = model.generateContent(prompt);
+      
+      // Add timeout handling
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('AI generation timed out')), 30000); // 30 seconds timeout
+      });
+      
+      const result = await Promise.race([generationPromise, timeoutPromise]);
       const responseText = result.response.text();
+      
       let quizData;
-
       try {
-        // ตรวจสอบว่าคำตอบมีรูปแบบ JSON หรือไม่
+        // Parse response considering different formats
         if (responseText.includes('```json') && responseText.includes('```')) {
           const jsonString = responseText.split('```json')[1].split('```')[0].trim();
           quizData = JSON.parse(jsonString);
         } else if (responseText.includes('```') && responseText.includes('```')) {
-          // กรณีที่ response มี code block แต่ไม่ได้ระบุภาษา
+          // For code blocks without language specification
           const jsonString = responseText.split('```')[1].split('```')[0].trim();
           quizData = JSON.parse(jsonString);
         } else {
-          // พยายามแปลงข้อความทั้งหมดเป็น JSON
+          // Try parsing the entire response as JSON
           quizData = JSON.parse(responseText);
         }
       } catch (error) {
         console.error('Error parsing Gemini response:', error);
+        
+        // Return more detailed error information for debugging
         return res.status(500).json({
           success: false,
           message: 'Failed to parse quiz data from AI response',
-          rawResponse: responseText
+          error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+          rawResponse: process.env.NODE_ENV === 'development' ? responseText.substring(0, 500) + '...' : undefined
         });
       }
 
+      // Validate the response data structure
+      if (!quizData.questions || !Array.isArray(quizData.questions)) {
+        return res.status(500).json({
+          success: false,
+          message: 'Invalid quiz data structure from AI response',
+          details: 'The questions array is missing or invalid'
+        });
+      }
+
+      // Return successful response
       return res.status(200).json({
         success: true,
         data: {
           topic,
           questionType,
           studentLevel,
-          language, // ส่งค่าภาษากลับไปด้วย
+          language,
           questions: quizData.questions
         }
       });
     } catch (error) {
-      console.error('Error generating quiz:', error);
-      return res.status(500).json({
-        success: false,
-        message: error.message
-      });
+      return handleApiError(res, error, 'Error generating quiz');
     }
   }
 
-  // บันทึกข้อสอบลงในฐานข้อมูล
+  // Save a quiz to the database
   static async saveQuiz(req, res) {
     try {
       const quizData = req.body;
 
+      // Validate required fields
       if (!quizData.title || !quizData.questions || quizData.questions.length === 0) {
         return res.status(400).json({
           success: false,
@@ -87,13 +128,25 @@ class QuizController {
         });
       }
 
+      // Check for duplicate title and get suggested title if needed
+      const titleCheck = await Quiz.checkDuplicateTitle(quizData.title);
+      const finalTitle = titleCheck.isDuplicate ? titleCheck.suggestedTitle : quizData.title;
+
+      // Update title if a duplicate was found
+      if (titleCheck.isDuplicate) {
+        quizData.title = finalTitle;
+      }
+
+      // Save quiz to database
       const result = await Quiz.saveQuiz(quizData);
 
       if (result.success) {
         return res.status(201).json({
           success: true,
           message: 'Quiz saved successfully',
-          quizId: result.quizId
+          quizId: result.quizId,
+          title: finalTitle,
+          isDuplicateTitle: titleCheck.isDuplicate
         });
       } else {
         return res.status(500).json({
@@ -103,36 +156,42 @@ class QuizController {
         });
       }
     } catch (error) {
-      console.error('Error saving quiz:', error);
-      return res.status(500).json({
-        success: false,
-        message: error.message
-      });
+      return handleApiError(res, error, 'Error saving quiz');
     }
   }
 
-  // ดึงข้อมูลข้อสอบทั้งหมด
+  // Get all quizzes
   static async getAllQuizzes(req, res) {
     try {
-      const quizzes = await Quiz.getAllQuizzes();
+      // Implement pagination
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 10;
+      const offset = (page - 1) * limit;
+      
+      // Get quizzes with pagination
+      const result = await Quiz.getAllQuizzes(limit, offset);
+      
       return res.status(200).json({
         success: true,
-        data: quizzes
+        data: result.quizzes,
+        pagination: {
+          total: result.total,
+          page,
+          limit,
+          totalPages: Math.ceil(result.total / limit)
+        }
       });
     } catch (error) {
-      console.error('Error fetching quizzes:', error);
-      return res.status(500).json({
-        success: false,
-        message: error.message
-      });
+      return handleApiError(res, error, 'Error fetching quizzes');
     }
   }
 
-  // ดึงข้อมูลข้อสอบตาม ID
+  // Get a quiz by ID
   static async getQuizById(req, res) {
     try {
       const { id } = req.params;
 
+      // Validate ID
       if (!id) {
         return res.status(400).json({
           success: false,
@@ -140,6 +199,7 @@ class QuizController {
         });
       }
 
+      // Get quiz from database
       const quiz = await Quiz.getQuizById(id);
 
       if (!quiz) {
@@ -154,19 +214,16 @@ class QuizController {
         data: quiz
       });
     } catch (error) {
-      console.error('Error fetching quiz by ID:', error);
-      return res.status(500).json({
-        success: false,
-        message: error.message
-      });
+      return handleApiError(res, error, 'Error fetching quiz by ID');
     }
   }
 
-  // ลบข้อสอบ
+  // Delete a quiz
   static async deleteQuiz(req, res) {
     try {
       const { id } = req.params;
 
+      // Validate ID
       if (!id) {
         return res.status(400).json({
           success: false,
@@ -174,6 +231,7 @@ class QuizController {
         });
       }
 
+      // Delete quiz from database
       const result = await Quiz.deleteQuiz(id);
 
       if (result.success) {
@@ -189,17 +247,13 @@ class QuizController {
         });
       }
     } catch (error) {
-      console.error('Error deleting quiz:', error);
-      return res.status(500).json({
-        success: false,
-        message: error.message
-      });
+      return handleApiError(res, error, 'Error deleting quiz');
     }
   }
 
-  // สร้าง prompt สำหรับ Google Gemini API
+  // Create prompt for Google Gemini API
   static createPrompt(topic, questionType, numberOfQuestions, additionalInstructions, studentLevel, language) {
-    // กำหนดภาษาที่ใช้ในการสร้างข้อสอบ
+    // Set language for quiz
     const languagePrompt = language === 'thai'
       ? "Create the quiz in Thai language."
       : "Create the quiz in English language.";
@@ -210,17 +264,18 @@ class QuizController {
       prompt += ` The quiz is intended for ${studentLevel} level students.`;
     }
 
-    // ถ้ามีคำแนะนำเพิ่มเติม ตรวจสอบว่ามีการขอให้สร้างข้อสอบที่ไม่ซ้ำหรือไม่
+    // Add any additional instructions
     if (additionalInstructions) {
       prompt += ` Additional instructions: ${additionalInstructions}`;
 
-      // ถ้าขอให้สร้างข้อสอบไม่ซ้ำ ให้เน้นในคำแนะนำของ prompt
+      // Emphasize avoiding duplication if requested
       if (additionalInstructions.includes("avoid duplication") ||
         additionalInstructions.includes("different questions")) {
         prompt += ` IMPORTANT: Please make sure to generate completely new and different questions that do not duplicate any previous questions on this topic.`;
       }
     }
 
+    // Add format instructions based on question type
     if (questionType === 'Multiple Choice') {
       prompt += ` For each question, provide 4 options (A, B, C, D), indicate the correct answer, and include a brief explanation of why the answer is correct.`;
       prompt += ` Return the quiz in the following JSON format ONLY (do not include any other text or explanations outside the JSON):
@@ -253,12 +308,14 @@ class QuizController {
 
     return prompt;
   }
-  // เปลี่ยนชื่อข้อสอบ
+
+  // Rename a quiz
   static async renameQuiz(req, res) {
     try {
       const { id } = req.params;
       const { title } = req.body;
 
+      // Validate inputs
       if (!id) {
         return res.status(400).json({
           success: false,
@@ -273,12 +330,19 @@ class QuizController {
         });
       }
 
-      const result = await Quiz.renameQuiz(id, title);
+      // Check for duplicate title
+      const titleCheck = await Quiz.checkDuplicateTitle(title);
+      const finalTitle = titleCheck.isDuplicate ? titleCheck.suggestedTitle : title;
+
+      // Rename quiz in database
+      const result = await Quiz.renameQuiz(id, finalTitle);
 
       if (result.success) {
         return res.status(200).json({
           success: true,
-          message: 'Quiz renamed successfully'
+          message: 'Quiz renamed successfully',
+          title: finalTitle,
+          isDuplicateTitle: titleCheck.isDuplicate
         });
       } else {
         return res.status(500).json({
@@ -288,11 +352,7 @@ class QuizController {
         });
       }
     } catch (error) {
-      console.error('Error renaming quiz:', error);
-      return res.status(500).json({
-        success: false,
-        message: error.message
-      });
+      return handleApiError(res, error, 'Error renaming quiz');
     }
   }
 
@@ -302,6 +362,7 @@ class QuizController {
       const { id } = req.params;
       const { questions } = req.body;
 
+      // Validate inputs
       if (!id) {
         return res.status(400).json({
           success: false,
@@ -316,7 +377,7 @@ class QuizController {
         });
       }
 
-      // Call the model method to update the questions
+      // Update questions in database
       const result = await Quiz.updateQuizQuestions(id, questions);
 
       if (result.success) {
@@ -332,19 +393,17 @@ class QuizController {
         });
       }
     } catch (error) {
-      console.error('Error updating quiz questions:', error);
-      return res.status(500).json({
-        success: false,
-        message: error.message
-      });
+      return handleApiError(res, error, 'Error updating quiz questions');
     }
   }
-  // เพิ่มฟังก์ชันสำหรับย้ายข้อสอบไปยังโฟลเดอร์
+
+  // Move quiz to a folder
   static async moveQuiz(req, res) {
     try {
       const { id } = req.params;
       const { folderId } = req.body;
 
+      // Validate inputs
       if (!id) {
         return res.status(400).json({
           success: false,
@@ -359,6 +418,7 @@ class QuizController {
         });
       }
 
+      // Move quiz in database
       const result = await Quiz.moveQuiz(id, folderId);
 
       if (result.success) {
@@ -374,11 +434,30 @@ class QuizController {
         });
       }
     } catch (error) {
-      console.error('Error moving quiz:', error);
-      return res.status(500).json({
-        success: false,
-        message: error.message
+      return handleApiError(res, error, 'Error moving quiz');
+    }
+  }
+
+  // Check if a quiz title is already in use
+  static async checkTitleAvailability(req, res) {
+    try {
+      const { title } = req.query;
+      
+      if (!title) {
+        return res.status(400).json({
+          success: false,
+          message: 'Title is required'
+        });
+      }
+      
+      const result = await Quiz.checkDuplicateTitle(title);
+      
+      return res.status(200).json({
+        success: true,
+        data: result
       });
+    } catch (error) {
+      return handleApiError(res, error, 'Error checking title availability');
     }
   }
 }

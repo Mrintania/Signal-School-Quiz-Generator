@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { quizService } from '../services/api';
 
 export function useQuizzes() {
@@ -7,20 +7,42 @@ export function useQuizzes() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   
-  const fetchQuizzes = useCallback(async () => {
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
+  const [totalItems, setTotalItems] = useState(0);
+  const [searchQuery, setSearchQuery] = useState('');
+  
+  const fetchQuizzes = useCallback(async (page = 1, limit = 10, search = '') => {
     try {
       setLoading(true);
       setError(null);
       
+      // In a real implementation, these params would be passed to the API
+      // For now, we'll simulate pagination by filtering the results client-side
       const response = await quizService.getAllQuizzes();
       
       if (response.success) {
+        const allQuizzes = response.data;
+        
+        // Set total count for pagination
+        setTotalItems(allQuizzes.length);
+        
+        // Filter by search term if provided
+        const filteredQuizzes = search 
+          ? allQuizzes.filter(quiz => 
+              quiz.title.toLowerCase().includes(search.toLowerCase()) ||
+              quiz.topic.toLowerCase().includes(search.toLowerCase())
+            )
+          : allQuizzes;
+        
         // Add folderId if not exists
-        const quizzesWithFolder = response.data.map(quiz => ({
+        const quizzesWithFolder = filteredQuizzes.map(quiz => ({
           ...quiz,
           folderId: quiz.folderId || 'root'
         }));
         
+        // Store all quizzes but only paginate in the UI
         setQuizzes(quizzesWithFolder);
       } else {
         setError(response.message || 'Failed to fetch quizzes');
@@ -32,6 +54,27 @@ export function useQuizzes() {
     }
   }, []);
   
+  // Get current page items
+  const paginatedQuizzes = useMemo(() => {
+    const indexOfLastItem = currentPage * itemsPerPage;
+    const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+    
+    // Filter by search query first
+    const filteredQuizzes = searchQuery
+      ? quizzes.filter(quiz => 
+          quiz.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (quiz.topic && quiz.topic.toLowerCase().includes(searchQuery.toLowerCase()))
+        )
+      : quizzes;
+    
+    // Then paginate the filtered results
+    return filteredQuizzes.slice(indexOfFirstItem, indexOfLastItem);
+  }, [quizzes, currentPage, itemsPerPage, searchQuery]);
+  
+  // Change page
+  const paginate = (pageNumber) => setCurrentPage(pageNumber);
+  
+  // Other functions remain the same...
   const deleteQuiz = useCallback(async (quizId) => {
     if (!quizId) return { success: false };
     
@@ -109,7 +152,7 @@ export function useQuizzes() {
   
   // Initialize quizzes on component mount
   useEffect(() => {
-    fetchQuizzes().then(() => {
+    fetchQuizzes(currentPage, itemsPerPage, searchQuery).then(() => {
       // After fetching quizzes, check localStorage for folder assignments
       const quizFolders = JSON.parse(localStorage.getItem('quizFolders') || '{}');
       
@@ -139,10 +182,11 @@ export function useQuizzes() {
     return () => {
       window.removeEventListener('storage', handleStorageChange);
     };
-  }, [fetchQuizzes]);
+  }, [fetchQuizzes, currentPage, itemsPerPage, searchQuery]);
   
   return {
-    quizzes,
+    quizzes,       // All quizzes
+    paginatedQuizzes, // Current page quizzes
     selectedQuiz,
     setSelectedQuiz,
     loading,
@@ -151,6 +195,16 @@ export function useQuizzes() {
     fetchQuizzes,
     deleteQuiz,
     renameQuiz,
-    moveQuiz
+    moveQuiz,
+    // Pagination
+    currentPage,
+    setCurrentPage,
+    itemsPerPage,
+    setItemsPerPage,
+    totalItems,
+    paginate,
+    // Search
+    searchQuery,
+    setSearchQuery
   };
 }

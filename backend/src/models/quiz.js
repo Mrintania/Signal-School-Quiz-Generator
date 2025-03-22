@@ -1,105 +1,111 @@
 import { pool } from '../config/db.js';
 
 class Quiz {
-  // บันทึกข้อสอบใหม่ลงในฐานข้อมูล
+  // Save a new quiz to the database
   static async saveQuiz(quizData) {
     const { title, topic, questionType, studentLevel, language, questions } = quizData;
+    const connection = await pool.getConnection();
 
     try {
-      const connection = await pool.getConnection();
-
-      // เริ่ม transaction
+      // Start transaction
       await connection.beginTransaction();
 
-      try {
-        // เพิ่มข้อมูลเข้าตาราง quizzes
-        const [quizResult] = await connection.execute(
-          'INSERT INTO quizzes (title, topic, question_type, student_level, language, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
-          [title, topic, questionType, studentLevel, language || 'english'] // ถ้าไม่มีการระบุภาษา ให้เป็นภาษาอังกฤษเป็นค่าเริ่มต้น
+      // Insert quiz
+      const [quizResult] = await connection.execute(
+        'INSERT INTO quizzes (title, topic, question_type, student_level, language, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
+        [title, topic, questionType, studentLevel, language || 'english']
+      );
+
+      const quizId = quizResult.insertId;
+
+      // Insert questions
+      for (const question of questions) {
+        const [questionResult] = await connection.execute(
+          'INSERT INTO questions (quiz_id, question_text, explanation, created_at) VALUES (?, ?, ?, NOW())',
+          [quizId, question.questionText, question.explanation]
         );
 
-        const quizId = quizResult.insertId;
+        const questionId = questionResult.insertId;
 
-        // เพิ่มคำถามแต่ละข้อเข้าตาราง questions
-        for (const question of questions) {
-          const [questionResult] = await connection.execute(
-            'INSERT INTO questions (quiz_id, question_text, explanation, created_at) VALUES (?, ?, ?, NOW())',
-            [quizId, question.questionText, question.explanation]
-          );
-
-          const questionId = questionResult.insertId;
-
-          // เพิ่มตัวเลือกของแต่ละคำถามเข้าตาราง options
-          if (question.options && question.options.length > 0) {
-            for (const option of question.options) {
-              await connection.execute(
-                'INSERT INTO options (question_id, option_text, is_correct, created_at) VALUES (?, ?, ?, NOW())',
-                [questionId, option.text, option.isCorrect]
-              );
-            }
+        // Insert options for multiple choice questions
+        if (question.options && question.options.length > 0) {
+          for (const option of question.options) {
+            await connection.execute(
+              'INSERT INTO options (question_id, option_text, is_correct, created_at) VALUES (?, ?, ?, NOW())',
+              [questionId, option.text, option.isCorrect]
+            );
           }
         }
-
-        // Commit transaction
-        await connection.commit();
-        connection.release();
-
-        return { success: true, quizId };
-      } catch (error) {
-        // Rollback transaction หากเกิดข้อผิดพลาด
-        await connection.rollback();
-        connection.release();
-        throw error;
       }
+
+      // Commit transaction
+      await connection.commit();
+      return { success: true, quizId };
     } catch (error) {
+      // Rollback on error
+      await connection.rollback();
       console.error('Error saving quiz:', error);
       return { success: false, error: error.message };
+    } finally {
+      connection.release();
     }
   }
 
-  // ดึงข้อมูลข้อสอบทั้งหมด
-  static async getAllQuizzes() {
+  // Get all quizzes with pagination
+  static async getAllQuizzes(limit = 10, offset = 0) {
     try {
-      const [rows] = await pool.execute(
-        'SELECT * FROM quizzes ORDER BY created_at DESC'
+      // Get total count first
+      const [countRows] = await pool.execute(
+        'SELECT COUNT(*) as total FROM quizzes'
       );
-      return rows;
+      
+      const total = countRows[0].total;
+      
+      // Then get paginated data
+      const [rows] = await pool.execute(
+        'SELECT * FROM quizzes ORDER BY created_at DESC LIMIT ? OFFSET ?',
+        [limit, offset]
+      );
+      
+      return {
+        quizzes: rows,
+        total
+      };
     } catch (error) {
       console.error('Error fetching quizzes:', error);
       throw error;
     }
   }
 
-  // ดึงข้อมูลข้อสอบตาม ID
+  // Get a quiz by ID with all questions and options
   static async getQuizById(quizId) {
+    const connection = await pool.getConnection();
+    
     try {
-      const connection = await pool.getConnection();
-
-      // ดึงข้อมูลข้อสอบจากตาราง quizzes
+      // Get quiz data
       const [quizRows] = await connection.execute(
         'SELECT * FROM quizzes WHERE id = ?',
         [quizId]
       );
 
       if (quizRows.length === 0) {
-        connection.release();
         return null;
       }
 
       const quiz = quizRows[0];
 
-      // ดึงคำถามทั้งหมดของข้อสอบ
+      // Get all questions for this quiz
       const [questionRows] = await connection.execute(
-        'SELECT * FROM questions WHERE quiz_id = ?',
+        'SELECT * FROM questions WHERE quiz_id = ? ORDER BY id ASC',
         [quizId]
       );
 
       const questions = [];
 
-      // ดึงตัวเลือกของแต่ละคำถาม
+      // Get options for each question
       for (const question of questionRows) {
         const [optionRows] = await connection.execute(
-          'SELECT * FROM options WHERE question_id = ?',
+          'SELECT * FROM options WHERE question_id = ? ORDER BY id ASC',
           [question.id]
         );
 
@@ -115,8 +121,6 @@ class Quiz {
         });
       }
 
-      connection.release();
-
       return {
         ...quiz,
         questions
@@ -124,58 +128,56 @@ class Quiz {
     } catch (error) {
       console.error('Error fetching quiz by ID:', error);
       throw error;
+    } finally {
+      connection.release();
     }
   }
 
-  // ลบข้อสอบ
+  // Delete a quiz and all related data
   static async deleteQuiz(quizId) {
+    const connection = await pool.getConnection();
+    
     try {
-      const connection = await pool.getConnection();
-
       await connection.beginTransaction();
 
-      try {
-        // ดึงคำถามทั้งหมดของข้อสอบ
-        const [questionRows] = await connection.execute(
-          'SELECT id FROM questions WHERE quiz_id = ?',
-          [quizId]
-        );
+      // Get all questions for this quiz
+      const [questionRows] = await connection.execute(
+        'SELECT id FROM questions WHERE quiz_id = ?',
+        [quizId]
+      );
 
-        // ลบตัวเลือกของแต่ละคำถาม
-        for (const question of questionRows) {
-          await connection.execute(
-            'DELETE FROM options WHERE question_id = ?',
-            [question.id]
-          );
-        }
-
-        // ลบคำถามทั้งหมดของข้อสอบ
+      // Delete options for each question
+      for (const question of questionRows) {
         await connection.execute(
-          'DELETE FROM questions WHERE quiz_id = ?',
-          [quizId]
+          'DELETE FROM options WHERE question_id = ?',
+          [question.id]
         );
-
-        // ลบข้อสอบ
-        await connection.execute(
-          'DELETE FROM quizzes WHERE id = ?',
-          [quizId]
-        );
-
-        await connection.commit();
-        connection.release();
-
-        return { success: true };
-      } catch (error) {
-        await connection.rollback();
-        connection.release();
-        throw error;
       }
+
+      // Delete all questions
+      await connection.execute(
+        'DELETE FROM questions WHERE quiz_id = ?',
+        [quizId]
+      );
+
+      // Delete the quiz
+      await connection.execute(
+        'DELETE FROM quizzes WHERE id = ?',
+        [quizId]
+      );
+
+      await connection.commit();
+      return { success: true };
     } catch (error) {
+      await connection.rollback();
       console.error('Error deleting quiz:', error);
       return { success: false, error: error.message };
+    } finally {
+      connection.release();
     }
   }
-  // เปลี่ยนชื่อข้อสอบ
+
+  // Rename a quiz
   static async renameQuiz(quizId, newTitle) {
     try {
       const [result] = await pool.execute(
@@ -194,31 +196,30 @@ class Quiz {
     }
   }
 
-  // ตรวจสอบชื่อข้อสอบซ้ำ
+  // Check for duplicate quiz titles and suggest alternatives
   static async checkDuplicateTitle(title) {
     try {
-      // ค้นหาข้อสอบที่มีชื่อเหมือนกัน หรือขึ้นต้นด้วยชื่อเดียวกันแล้วตามด้วย _ตัวเลข
+      // Search for exact match or titles with the same base and numbering
       const [rows] = await pool.execute(
         'SELECT title FROM quizzes WHERE title = ? OR title LIKE ?',
-        [title, `${title}\\_%`]
+        [title, `${title}\\_%%`]
       );
 
       if (rows.length === 0) {
-        // ถ้าไม่มีชื่อซ้ำ ให้ใช้ชื่อเดิมได้เลย
+        // No duplicates found
         return {
           isDuplicate: false,
           suggestedTitle: title
         };
       }
 
-      // สร้างรายการชื่อทั้งหมดที่มี
+      // Get all existing titles
       const existingTitles = rows.map(row => row.title);
 
-      // ถ้ามีชื่อซ้ำ ให้สร้างชื่อใหม่โดยเพิ่ม _ตัวเลขเรียงลำดับ
+      // Find the next available number
       let counter = 1;
       let newTitle = `${title}_${counter}`;
 
-      // ตรวจสอบจนกว่าจะพบชื่อที่ไม่ซ้ำ
       while (existingTitles.includes(newTitle)) {
         counter++;
         newTitle = `${title}_${counter}`;
@@ -230,91 +231,75 @@ class Quiz {
       };
     } catch (error) {
       console.error('Error checking duplicate title:', error);
-      // ถ้าเกิดข้อผิดพลาด ให้แนะนำชื่อเดิมไปก่อน
+      // Default to assuming no duplicate if there's an error
       return {
         isDuplicate: false,
         suggestedTitle: title
       };
     }
   }
+
   // Update quiz questions
   static async updateQuizQuestions(quizId, questions) {
+    const connection = await pool.getConnection();
+    
     try {
-      const connection = await pool.getConnection();
-
       await connection.beginTransaction();
 
-      try {
-        // Get the current quiz to ensure it exists
-        const [quizRows] = await connection.execute(
-          'SELECT * FROM quizzes WHERE id = ?',
-          [quizId]
+      // Verify quiz exists
+      const [quizRows] = await connection.execute(
+        'SELECT * FROM quizzes WHERE id = ?',
+        [quizId]
+      );
+
+      if (quizRows.length === 0) {
+        await connection.rollback();
+        return { success: false, error: 'Quiz not found' };
+      }
+
+      // Process only new questions (without an ID)
+      for (const question of questions) {
+        if (question.id) continue;
+
+        // Insert new question
+        const [questionResult] = await connection.execute(
+          'INSERT INTO questions (quiz_id, question_text, explanation, created_at) VALUES (?, ?, ?, NOW())',
+          [quizId, question.questionText, question.explanation]
         );
 
-        if (quizRows.length === 0) {
-          await connection.rollback();
-          connection.release();
-          return { success: false, error: 'Quiz not found' };
-        }
+        const questionId = questionResult.insertId;
 
-        // Get all current questions for this quiz
-        const [currentQuestions] = await connection.execute(
-          'SELECT id FROM questions WHERE quiz_id = ?',
-          [quizId]
-        );
-
-        // If there are new questions to add
-        for (const question of questions) {
-          // Skip questions that already have an ID (they are existing questions)
-          if (question.id) continue;
-
-          // Insert new question
-          const [questionResult] = await connection.execute(
-            'INSERT INTO questions (quiz_id, question_text, explanation, created_at) VALUES (?, ?, ?, NOW())',
-            [quizId, question.questionText, question.explanation]
-          );
-
-          const questionId = questionResult.insertId;
-
-          // Insert options if this is a multiple choice question
-          if (question.options && question.options.length > 0) {
-            for (const option of question.options) {
-              await connection.execute(
-                'INSERT INTO options (question_id, option_text, is_correct, created_at) VALUES (?, ?, ?, NOW())',
-                [questionId, option.text, option.isCorrect]
-              );
-            }
+        // Insert options if this is a multiple choice question
+        if (question.options && question.options.length > 0) {
+          for (const option of question.options) {
+            await connection.execute(
+              'INSERT INTO options (question_id, option_text, is_correct, created_at) VALUES (?, ?, ?, NOW())',
+              [questionId, option.text, option.isCorrect]
+            );
           }
         }
-
-        // Update the updated_at timestamp for the quiz
-        await connection.execute(
-          'UPDATE quizzes SET updated_at = NOW() WHERE id = ?',
-          [quizId]
-        );
-
-        // Commit transaction
-        await connection.commit();
-        connection.release();
-
-        return { success: true };
-      } catch (error) {
-        // Rollback transaction if error occurs
-        await connection.rollback();
-        connection.release();
-        throw error;
       }
+
+      // Update quiz timestamp
+      await connection.execute(
+        'UPDATE quizzes SET updated_at = NOW() WHERE id = ?',
+        [quizId]
+      );
+
+      await connection.commit();
+      return { success: true };
     } catch (error) {
+      await connection.rollback();
       console.error('Error updating quiz questions:', error);
       return { success: false, error: error.message };
+    } finally {
+      connection.release();
     }
   }
-  // เพิ่มฟังก์ชันสำหรับย้ายข้อสอบ
+
+  // Move quiz to a folder
   static async moveQuiz(quizId, folderId) {
     try {
-      // ต้องเพิ่มคอลัมน์ folder_id ในตาราง quizzes ก่อน
-      // ALTER TABLE quizzes ADD COLUMN folder_id VARCHAR(255) DEFAULT 'root';
-
       const [result] = await pool.execute(
         'UPDATE quizzes SET folder_id = ?, updated_at = NOW() WHERE id = ?',
         [folderId, quizId]
@@ -328,6 +313,33 @@ class Quiz {
     } catch (error) {
       console.error('Error moving quiz:', error);
       return { success: false, error: error.message };
+    }
+  }
+  
+  // Search quizzes by title or topic
+  static async searchQuizzes(searchTerm, limit = 10, offset = 0) {
+    try {
+      // Get total count first
+      const [countRows] = await pool.execute(
+        'SELECT COUNT(*) as total FROM quizzes WHERE title LIKE ? OR topic LIKE ?',
+        [`%${searchTerm}%`, `%${searchTerm}%`]
+      );
+      
+      const total = countRows[0].total;
+      
+      // Then get paginated data
+      const [rows] = await pool.execute(
+        'SELECT * FROM quizzes WHERE title LIKE ? OR topic LIKE ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
+        [`%${searchTerm}%`, `%${searchTerm}%`, limit, offset]
+      );
+      
+      return {
+        quizzes: rows,
+        total
+      };
+    } catch (error) {
+      console.error('Error searching quizzes:', error);
+      throw error;
     }
   }
 }

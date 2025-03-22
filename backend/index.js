@@ -1,8 +1,17 @@
 import express from 'express';
-import cors from 'cors';
 import dotenv from 'dotenv';
 import quizRoutes from './src/routes/quizRoutes.js';
 import { testConnection } from './src/config/db.js';
+import { logger, httpLogger } from './src/utils/logger.js';
+import applySecurityMiddleware from './src/middlewares/security.js';
+import { sanitizeAll } from './src/utils/validator.js';
+import { generalLimiter } from './src/middlewares/rateLimiter.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+// Get directory paths for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Load environment variables
 dotenv.config();
@@ -11,23 +20,91 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Middleware
-app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Create logs directory if it doesn't exist
+import fs from 'fs';
+if (!fs.existsSync('logs')) {
+  fs.mkdirSync('logs');
+}
+
+// Apply security middleware
+applySecurityMiddleware(app);
+
+// Apply HTTP request logging
+app.use(httpLogger);
+
+// Apply general rate limiter
+app.use(generalLimiter);
+
+// Body parsing middleware
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+
+// Apply input sanitization
+app.use(sanitizeAll);
 
 // Test database connection
-testConnection();
+testConnection()
+  .then(success => {
+    if (success) {
+      logger.info('Database connection established successfully');
+    } else {
+      logger.error('Database connection failed');
+    }
+  })
+  .catch(error => {
+    logger.error('Database connection error:', error);
+  });
 
-// Routes
+// API Routes
 app.use('/api/quizzes', quizRoutes);
 
 // Home route
-app.get('/', (req, res) => {
-  res.json({ message: 'Welcome to Quiz Generator API' });
+app.get('/api', (req, res) => {
+  res.json({ 
+    message: 'Welcome to Quiz Generator API',
+    version: process.env.API_VERSION || '1.0.0',
+    status: 'Running'
+  });
+});
+
+// Serve static files in production
+if (process.env.NODE_ENV === 'production') {
+  // Set static folder
+  app.use(express.static(path.join(__dirname, '../frontend/build')));
+  
+  // Any route not matched by API routes will serve the React app
+  app.get('*', (req, res) => {
+    res.sendFile(path.resolve(__dirname, '../frontend/build', 'index.html'));
+  });
+}
+
+// 404 handler for API routes
+app.use('/api/*', (req, res) => {
+  logger.warn(`Route not found: ${req.originalUrl}`);
+  res.status(404).json({
+    success: false,
+    message: 'API endpoint not found'
+  });
+});
+
+// Global error handler
+app.use((err, req, res, next) => {
+  logger.error(`Global error handler: ${err.message}`, { 
+    url: req.originalUrl,
+    method: req.method,
+    stack: err.stack
+  });
+  
+  const statusCode = err.statusCode || 500;
+  
+  res.status(statusCode).json({
+    success: false,
+    message: process.env.NODE_ENV === 'production' ? 'Server error' : err.message
+  });
 });
 
 // Start the server
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  logger.info(`Server is running on port ${PORT}`);
+  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
 });
