@@ -1,77 +1,283 @@
-import React from 'react';
-import { Container, Row, Col, Card, Button, Image } from 'react-bootstrap';
-import { Link } from 'react-router-dom';
-import { FaPlus, FaBook, FaMagic } from 'react-icons/fa';
-import logo from '../assets/logo.png';
+import React, { useState, useEffect } from 'react';
+import { Container, Row, Col, Card, Dropdown } from 'react-bootstrap';
+import { Link, useNavigate } from 'react-router-dom';
+import { quizService } from '../services/api';
 
 const HomePage = () => {
-  return (
-    <Container fluid className="py-5 fade-in">
-      <Row className="justify-content-center">
-        <Col xs={12} className="text-center mb-5">
-          <Image 
-            src={logo} 
-            alt="Signal School Logo" 
-            width="80" 
-            height="80" 
-            className="mb-3"
-          />
-          <h1 className="display-4 fw-bold">Hi Pornsupat! 👋</h1>
-          <p className="lead mt-3">Welcome to <span className="fw-bold" style={{ color: '#6f42c1' }}>Signal School Quiz Generator</span>. Create professional quizzes in seconds.</p>
-        </Col>
-      </Row>
+  const navigate = useNavigate();
+  
+  // User data - can be connected to authentication system later
+  const [userData, setUserData] = useState({
+    name: 'Pornsupat Vutisuwan',
+    role: 'Teacher'
+  });
+
+  // State for recent content and stats
+  const [quizzes, setQuizzes] = useState([]);
+  const [categorizedQuizzes, setCategorizedQuizzes] = useState({
+    today: [],
+    yesterday: [],
+    lastWeek: [],
+    lastMonth: [],
+    older: []
+  });
+  const [loading, setLoading] = useState(true);
+  const [quizCount, setQuizCount] = useState(0);
+  
+  // Format date using native JavaScript methods
+  const formatDate = (date) => {
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    
+    const dayName = days[date.getDay()];
+    const day = date.getDate();
+    const monthName = months[date.getMonth()];
+    const year = date.getFullYear();
+    
+    return `${dayName}, ${day} ${monthName} ${year}`;
+  };
+  
+  // Get current date formatted as shown in the design
+  const currentDate = formatDate(new Date());
+  
+  // Function to categorize quizzes by date
+  const categorizeQuizzesByDate = (quizzesList) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    const lastWeekStart = new Date(today);
+    lastWeekStart.setDate(lastWeekStart.getDate() - 7);
+    
+    const lastMonthStart = new Date(today);
+    lastMonthStart.setMonth(lastMonthStart.getMonth() - 1);
+    
+    const result = {
+      today: [],
+      yesterday: [],
+      lastWeek: [],
+      lastMonth: [],
+      older: []
+    };
+    
+    quizzesList.forEach(quiz => {
+      const quizDate = new Date(quiz.created_at);
+      quizDate.setHours(0, 0, 0, 0);
       
-      <Row className="justify-content-center g-4">
-        <Col xs={12} md={6} lg={4}>
-          <Link to="/create" className="text-decoration-none">
-            <Card className="h-100 shadow-sm hover-card">
-              <Card.Body className="text-center py-5">
-                <div className="mb-4 rounded-circle bg-light d-inline-flex p-3">
-                  <FaPlus size={40} color="#6f42c1" />
+      if (quizDate.getTime() === today.getTime()) {
+        result.today.push(quiz);
+      } else if (quizDate.getTime() === yesterday.getTime()) {
+        result.yesterday.push(quiz);
+      } else if (quizDate >= lastWeekStart) {
+        result.lastWeek.push(quiz);
+      } else if (quizDate >= lastMonthStart) {
+        result.lastMonth.push(quiz);
+      } else {
+        result.older.push(quiz);
+      }
+    });
+    
+    return result;
+  };
+  
+  // Fetch user's quizzes
+  useEffect(() => {
+    const fetchQuizzes = async () => {
+      try {
+        setLoading(true);
+        // Get all quizzes from API
+        const response = await quizService.getAllQuizzes();
+        
+        if (response.success) {
+          // Sort quizzes by created_at in descending order
+          const sortedQuizzes = response.data.sort((a, b) => 
+            new Date(b.created_at) - new Date(a.created_at)
+          );
+          
+          // Store all quizzes
+          setQuizzes(sortedQuizzes);
+          
+          // Update quiz count for stats
+          setQuizCount(sortedQuizzes.length);
+          
+          // Categorize quizzes by date
+          const categorized = categorizeQuizzesByDate(sortedQuizzes.slice(0, 10));
+          setCategorizedQuizzes(categorized);
+        }
+      } catch (error) {
+        console.error('Error fetching quizzes:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchQuizzes();
+  }, []);
+  
+  // Handle quiz click to navigate to view page
+  const handleQuizClick = (quizId) => {
+    navigate(`/view/${quizId}`);
+  };
+  
+  // Stats
+  const stats = {
+    quiz: quizCount,
+    lessonPlan: 0,
+    teachingResources: 0,
+    slideDeck: 0,
+    flashcardSet: 0,
+    customChatbot: 0
+  };
+
+  // Timeline section component
+  const TimelineSection = ({ title, quizzes }) => {
+    if (!quizzes || quizzes.length === 0) return null;
+    
+    return (
+      <>
+        <div className="d-flex align-items-center mb-3">
+          <div className="rounded-circle bg-success me-2" style={{ width: '12px', height: '12px' }}></div>
+          <h5 className="mb-0">{title}</h5>
+        </div>
+        
+        {quizzes.map(quiz => (
+          <div 
+            key={quiz.id} 
+            className="card mb-3 border-0 shadow-sm" 
+            style={{ cursor: 'pointer' }}
+            onClick={() => handleQuizClick(quiz.id)}
+          >
+            <div className="card-body">
+              <div>
+                <h6 className="mb-0">{quiz.title}</h6>
+                <div className="mt-1">
+                  <span className="badge bg-light text-dark rounded-pill px-3 py-1">QUIZ</span>
                 </div>
-                <Card.Title className="fw-bold">Create New Quiz</Card.Title>
-                <Card.Text className="text-muted">
-                  Create a new quiz using AI to generate questions based on your topic.
-                </Card.Text>
-                <Button variant="primary" className="mt-3">
-                  Get Started
-                </Button>
-              </Card.Body>
-            </Card>
-          </Link>
+              </div>
+            </div>
+          </div>
+        ))}
+      </>
+    );
+  };
+
+  return (
+    <Container fluid className="py-4 px-4">
+      {/* User greeting section */}
+      <div className="mb-4 d-flex justify-content-between align-items-start">
+        <div>
+          <h1 className="mb-0">Hi, {userData.name}</h1>
+          <p className="text-muted mb-0">{currentDate}</p>
+        </div>
+        <div>
+          <img 
+            src="https://cdn.pixabay.com/photo/2023/05/25/08/06/girl-8016935_1280.png" 
+            alt="Working girl" 
+            style={{ height: '100px' }} 
+          />
+        </div>
+      </div>
+      
+      {/* Stats cards */}
+      <Row className="mb-5 g-4">
+        <Col xs={6} sm={4} md={2}>
+          <Card className="h-100 border-0 shadow-sm" style={{ backgroundColor: '#f5faea' }}>
+            <Card.Body className="text-center">
+              <h1 className="display-4 fw-bold">{stats.quiz}</h1>
+              <p className="mb-0 text-muted">Quiz</p>
+            </Card.Body>
+          </Card>
         </Col>
         
-        <Col xs={12} md={6} lg={4}>
-          <Link to="/library" className="text-decoration-none">
-            <Card className="h-100 shadow-sm hover-card">
-              <Card.Body className="text-center py-5">
-                <div className="mb-4 rounded-circle bg-light d-inline-flex p-3">
-                  <FaBook size={40} color="#6f42c1" />
-                </div>
-                <Card.Title className="fw-bold">My Library</Card.Title>
-                <Card.Text className="text-muted">
-                  Access your previously created quizzes and manage your collection.
-                </Card.Text>
-                <Button variant="outline-primary" className="mt-3">
-                  View Library
-                </Button>
-              </Card.Body>
-            </Card>
-          </Link>
+        <Col xs={6} sm={4} md={2}>
+          <Card className="h-100 border-0 shadow-sm">
+            <Card.Body className="text-center">
+              <h1 className="display-4 fw-bold text-secondary">{stats.lessonPlan}</h1>
+              <p className="mb-0 text-muted">Lesson Plan</p>
+            </Card.Body>
+          </Card>
+        </Col>
+        
+        <Col xs={6} sm={4} md={2}>
+          <Card className="h-100 border-0 shadow-sm">
+            <Card.Body className="text-center">
+              <h1 className="display-4 fw-bold text-secondary">{stats.teachingResources}</h1>
+              <p className="mb-0 text-muted">Teaching Resources</p>
+            </Card.Body>
+          </Card>
+        </Col>
+        
+        <Col xs={6} sm={4} md={2}>
+          <Card className="h-100 border-0 shadow-sm">
+            <Card.Body className="text-center">
+              <h1 className="display-4 fw-bold text-secondary">{stats.slideDeck}</h1>
+              <p className="mb-0 text-muted">Slide Deck</p>
+            </Card.Body>
+          </Card>
+        </Col>
+        
+        <Col xs={6} sm={4} md={2}>
+          <Card className="h-100 border-0 shadow-sm">
+            <Card.Body className="text-center">
+              <h1 className="display-4 fw-bold text-secondary">{stats.flashcardSet}</h1>
+              <p className="mb-0 text-muted">Flashcard Set</p>
+            </Card.Body>
+          </Card>
+        </Col>
+        
+        <Col xs={6} sm={4} md={2}>
+          <Card className="h-100 border-0 shadow-sm">
+            <Card.Body className="text-center">
+              <h1 className="display-4 fw-bold text-secondary">{stats.customChatbot}</h1>
+              <p className="mb-0 text-muted">Custom Chatbot</p>
+            </Card.Body>
+          </Card>
         </Col>
       </Row>
       
-      <Row className="mt-5 pt-4">
-        <Col xs={12} className="text-center">
-          <div className="d-inline-flex p-2 rounded-circle bg-light mb-3">
-            <FaMagic size={30} color="#6f42c1" />
+      {/* Recent contents section */}
+      <div className="mb-4">
+        <h2 className="mb-4">Recent contents</h2>
+        
+        <div className="position-relative">
+          {/* Vertical timeline line */}
+          <div 
+            className="position-absolute" 
+            style={{ 
+              left: '6px', 
+              top: '24px', 
+              bottom: '0', 
+              width: '2px', 
+              backgroundColor: '#ececec',
+              zIndex: -1
+            }}
+          ></div>
+          
+          {/* Timeline content */}
+          <div className="ps-4">
+            <TimelineSection title="Today" quizzes={categorizedQuizzes.today} />
+            <TimelineSection title="Last week" quizzes={categorizedQuizzes.lastWeek} />
+            <TimelineSection title="Last month" quizzes={categorizedQuizzes.lastMonth} />
+            <TimelineSection title="Older" quizzes={categorizedQuizzes.older} />
+            
+            {loading && (
+              <div className="text-center py-4">
+                <div className="spinner-border text-primary" role="status">
+                  <span className="visually-hidden">Loading...</span>
+                </div>
+              </div>
+            )}
+            
+            {!loading && Object.values(categorizedQuizzes).every(arr => arr.length === 0) && (
+              <div className="text-center py-4 text-muted">
+                No recent content found
+              </div>
+            )}
           </div>
-          <h2 className="fw-bold">Powered by Sgt.Pornsupat Vutisuwan</h2>
-          <p className="text-muted">
-            Signal School Quiz Generator uses advanced AI to create high-quality, educational quizzes for any subject.
-          </p>
-        </Col>
-      </Row>
+        </div>
+      </div>
     </Container>
   );
 };
