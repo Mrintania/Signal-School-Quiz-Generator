@@ -31,6 +31,9 @@ router.get('/:id/export/text', ExportController.exportQuizToPlainText);
 // API Route for updating quiz questions
 router.patch('/:id/questions', QuizController.updateQuizQuestions);
 
+// เพิ่ม route สำหรับย้ายข้อสอบ
+router.patch('/:id/move', QuizController.moveQuiz);
+
 // API Route for checking title availability
 // router.get('/check-title', QuizController.checkTitleAvailability);
 export default router;

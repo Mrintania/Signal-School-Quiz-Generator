@@ -171,13 +171,13 @@ const HomePage = () => {
           <h1 className="mb-0">Hi, {userData.name}</h1>
           <p className="text-muted mb-0">{currentDate}</p>
         </div>
-        <div>
+        {/* <div>
           <img 
             src="https://cdn.pixabay.com/photo/2023/05/25/08/06/girl-8016935_1280.png" 
             alt="Working girl" 
             style={{ height: '100px' }} 
           />
-        </div>
+        </div> */}
       </div>
       
       {/* Stats cards */}

@@ -180,7 +180,7 @@ const CreateQuizPage = () => {
                 </p>
               </div>
               
-              {/* Input source tabs */}
+              {/* Input source tabs - UPDATED FOR BETTER VISIBILITY */}
               <Nav 
                 variant="pills" 
                 className="nav-justified bg-light p-2 rounded-pill mb-4"
@@ -190,44 +190,44 @@ const CreateQuizPage = () => {
                 <Nav.Item>
                   <Nav.Link 
                     eventKey="topic" 
-                    className={`rounded-pill ${activeSource === 'topic' ? 'bg-white shadow-sm' : ''}`}
+                    className={`rounded-pill ${activeSource === 'topic' ? 'bg-white shadow-sm text-primary' : 'text-dark'}`}
                   >
                     <div className="d-flex align-items-center justify-content-center">
                       <span className="me-2">✏️</span>
-                      <span>Topic</span>
+                      <span className={activeSource === 'topic' ? 'fw-bold' : ''}>Topic</span>
                     </div>
                   </Nav.Link>
                 </Nav.Item>
                 <Nav.Item>
                   <Nav.Link 
                     eventKey="text" 
-                    className={`rounded-pill ${activeSource === 'text' ? 'bg-white shadow-sm' : ''}`}
+                    className={`rounded-pill ${activeSource === 'text' ? 'bg-white shadow-sm text-primary' : 'text-dark'}`}
                   >
                     <div className="d-flex align-items-center justify-content-center">
                       <span className="me-2">📄</span>
-                      <span>Text</span>
+                      <span className={activeSource === 'text' ? 'fw-bold' : ''}>Text</span>
                     </div>
                   </Nav.Link>
                 </Nav.Item>
                 <Nav.Item>
                   <Nav.Link 
                     eventKey="webpage" 
-                    className={`rounded-pill ${activeSource === 'webpage' ? 'bg-white shadow-sm' : ''}`}
+                    className={`rounded-pill ${activeSource === 'webpage' ? 'bg-white shadow-sm text-primary' : 'text-dark'}`}
                   >
                     <div className="d-flex align-items-center justify-content-center">
                       <span className="me-2">🌐</span>
-                      <span>Webpage</span>
+                      <span className={activeSource === 'webpage' ? 'fw-bold' : ''}>Webpage</span>
                     </div>
                   </Nav.Link>
                 </Nav.Item>
                 <Nav.Item>
                   <Nav.Link 
                     eventKey="file" 
-                    className={`rounded-pill ${activeSource === 'file' ? 'bg-white shadow-sm' : ''}`}
+                    className={`rounded-pill ${activeSource === 'file' ? 'bg-white shadow-sm text-primary' : 'text-dark'}`}
                   >
                     <div className="d-flex align-items-center justify-content-center">
                       <span className="me-2">📁</span>
-                      <span>File</span>
+                      <span className={activeSource === 'file' ? 'fw-bold' : ''}>File</span>
                       <span className="ms-2 text-warning" style={{ fontSize: '0.7rem' }}>👑</span>
                     </div>
                   </Nav.Link>

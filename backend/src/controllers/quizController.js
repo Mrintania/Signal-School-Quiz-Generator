@@ -339,6 +339,48 @@ class QuizController {
       });
     }
   }
+  // เพิ่มฟังก์ชันสำหรับย้ายข้อสอบไปยังโฟลเดอร์
+  static async moveQuiz(req, res) {
+    try {
+      const { id } = req.params;
+      const { folderId } = req.body;
+
+      if (!id) {
+        return res.status(400).json({
+          success: false,
+          message: 'Quiz ID is required'
+        });
+      }
+
+      if (!folderId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Folder ID is required'
+        });
+      }
+
+      const result = await Quiz.moveQuiz(id, folderId);
+
+      if (result.success) {
+        return res.status(200).json({
+          success: true,
+          message: 'Quiz moved successfully'
+        });
+      } else {
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to move quiz',
+          error: result.error
+        });
+      }
+    } catch (error) {
+      console.error('Error moving quiz:', error);
+      return res.status(500).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
 }
 
 export default QuizController;

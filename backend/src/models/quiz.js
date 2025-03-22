@@ -308,7 +308,28 @@ class Quiz {
       console.error('Error updating quiz questions:', error);
       return { success: false, error: error.message };
     }
-  } 
+  }
+  // เพิ่มฟังก์ชันสำหรับย้ายข้อสอบ
+  static async moveQuiz(quizId, folderId) {
+    try {
+      // ต้องเพิ่มคอลัมน์ folder_id ในตาราง quizzes ก่อน
+      // ALTER TABLE quizzes ADD COLUMN folder_id VARCHAR(255) DEFAULT 'root';
+
+      const [result] = await pool.execute(
+        'UPDATE quizzes SET folder_id = ?, updated_at = NOW() WHERE id = ?',
+        [folderId, quizId]
+      );
+
+      if (result.affectedRows === 0) {
+        return { success: false, error: 'Quiz not found' };
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.error('Error moving quiz:', error);
+      return { success: false, error: error.message };
+    }
+  }
 }
 
 export default Quiz;

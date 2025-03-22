@@ -128,6 +128,28 @@ export const quizService = {
       throw error;
     }
   },
+  moveQuiz: async (quizId, folderId) => {
+    try {
+      // แทนที่จะส่ง API request เราจะใช้ localStorage แทน
+      const quizFolders = JSON.parse(localStorage.getItem('quizFolders') || '{}');
+      
+      // บันทึกข้อมูลว่าข้อสอบนี้อยู่ในโฟลเดอร์ไหน
+      quizFolders[quizId] = folderId;
+      localStorage.setItem('quizFolders', JSON.stringify(quizFolders));
+      
+      // ทำให้ UI อัปเดต
+      window.dispatchEvent(new Event('storage'));
+      
+      // mock response
+      return {
+        success: true,
+        message: 'Quiz moved successfully'
+      };
+    } catch (error) {
+      console.error('Error moving quiz:', error);
+      throw error;
+    }
+  },
 };
 
 

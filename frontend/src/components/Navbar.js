@@ -9,7 +9,7 @@ const NavbarComponent = () => {
   const [user, setUser] = useState({
     isLoggedIn: true,
     name: 'Pornsupat Vutisuwan',
-    subscription: 'Free',
+    // subscription: 'Free',
     profile: {
       initial: 'P',
       image: null, // ในกรณีที่มีรูปภาพโปรไฟล์
