@@ -14,19 +14,19 @@ router.use(generalLimiter);
 
 // API Route for generating a quiz - stricter rate limiting for AI calls
 router.post(
-  '/generate', 
-  aiGenerationLimiter,
-  commonRules.quizRules.generate, 
-  validate, 
-  QuizController.generateQuiz
+    '/generate',
+    aiGenerationLimiter,
+    commonRules.quizRules.generate,
+    validate,
+    QuizController.generateQuiz
 );
 
 // API Route for saving a generated quiz
 router.post(
-  '/save', 
-  commonRules.quizRules.create, 
-  validate, 
-  QuizController.saveQuiz
+    '/save',
+    commonRules.quizRules.create,
+    validate,
+    QuizController.saveQuiz
 );
 
 // API Route for getting all quizzes
@@ -34,58 +34,58 @@ router.get('/', QuizController.getAllQuizzes);
 
 // API Route for getting a quiz by ID
 router.get(
-  '/:id', 
-  commonRules.quizRules.getById, 
-  validate, 
-  QuizController.getQuizById
+    '/:id',
+    commonRules.quizRules.getById,
+    validate,
+    QuizController.getQuizById
 );
 
 // API Route for deleting a quiz
 router.delete(
-  '/:id', 
-  commonRules.quizRules.delete, 
-  validate, 
-  QuizController.deleteQuiz
+    '/:id',
+    commonRules.quizRules.delete,
+    validate,
+    QuizController.deleteQuiz
 );
 
 // API Route for renaming a quiz
 router.patch(
-  '/:id/rename', 
-  commonRules.quizRules.rename, 
-  validate, 
-  QuizController.renameQuiz
+    '/:id/rename',
+    commonRules.quizRules.rename,
+    validate,
+    QuizController.renameQuiz
 );
 
 // API Route for exporting a quiz in GIFT format for Moodle
 router.get(
-  '/:id/export/moodle', 
-  commonRules.quizRules.getById, 
-  validate, 
-  ExportController.exportQuizToGift
+    '/:id/export/moodle',
+    commonRules.quizRules.getById,
+    validate,
+    ExportController.exportQuizToGift
 );
 
 // API Route for exporting a quiz in plain text format
 router.get(
-  '/:id/export/text', 
-  commonRules.quizRules.getById, 
-  validate, 
-  ExportController.exportQuizToPlainText
+    '/:id/export/text',
+    commonRules.quizRules.getById,
+    validate,
+    ExportController.exportQuizToPlainText
 );
 
 // API Route for updating quiz questions
 router.patch(
-  '/:id/questions', 
-  commonRules.quizRules.updateQuestions, 
-  validate, 
-  QuizController.updateQuizQuestions
+    '/:id/questions',
+    commonRules.quizRules.updateQuestions,
+    validate,
+    QuizController.updateQuizQuestions
 );
 
 // API Route for moving a quiz to a folder
 router.patch(
-  '/:id/move', 
-  commonRules.quizRules.move, 
-  validate, 
-  QuizController.moveQuiz
+    '/:id/move',
+    commonRules.quizRules.move,
+    validate,
+    QuizController.moveQuiz
 );
 
 // API Route for checking title availability

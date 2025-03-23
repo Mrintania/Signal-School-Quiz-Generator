@@ -7,10 +7,10 @@ import { useQuizContext } from '../context/QuizContext';
 const CreateQuizPage = () => {
   const navigate = useNavigate();
   const { setGeneratedQuiz, setLoading, loading, setError } = useQuizContext();
-  
+
   // Input source tabs
   const [activeSource, setActiveSource] = useState('topic');
-  
+
   // Form state
   const [formData, setFormData] = useState({
     topic: '',
@@ -22,14 +22,14 @@ const CreateQuizPage = () => {
     studentLevel: '',
     language: 'thai'
   });
-  
+
   // Form validation state
   const [validated, setValidated] = useState(false);
-  
+
   // สำหรับแท็บ Webpage
   const [isLoadingWebpage, setIsLoadingWebpage] = useState(false);
   const [webpageLoaded, setWebpageLoaded] = useState(false);
-  
+
   // Handle form input changes
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -38,7 +38,7 @@ const CreateQuizPage = () => {
       [name]: value
     }));
   };
-  
+
   // ฟังก์ชันสำหรับปุ่ม Ideas
   const handleIdeasClick = () => {
     // รายชื่อวิชาตัวอย่าง
@@ -54,36 +54,36 @@ const CreateQuizPage = () => {
       "วิทยาการคำนวณ: การเขียนโปรแกรมเบื้องต้นด้วย Python",
       "ศิลปะ: ทัศนธาตุในงานศิลปะ"
     ];
-    
+
     // สุ่มเลือกหัวข้อหนึ่งจากรายการ
     const randomTopic = sampleTopics[Math.floor(Math.random() * sampleTopics.length)];
-    
+
     // อัปเดต state และเปลี่ยนแท็บไปที่ Topic
     setFormData(prevData => ({
       ...prevData,
       topic: randomTopic
     }));
-    
+
     setActiveSource('topic');
   };
-  
+
   // ฟังก์ชันโหลดเว็บเพจ (จำลองการโหลด)
   const handleLoadWebpage = () => {
     if (!formData.webpage) return;
-    
+
     setIsLoadingWebpage(true);
-    
+
     // จำลองการโหลดเว็บเพจ (ในการใช้งานจริงควรมีการเรียก API)
     setTimeout(() => {
       setIsLoadingWebpage(false);
       setWebpageLoaded(true);
     }, 1500);
   };
-  
+
   // Handle form submission
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     // Form validation
     const form = e.currentTarget;
     if (form.checkValidity() === false) {
@@ -91,45 +91,45 @@ const CreateQuizPage = () => {
       setValidated(true);
       return;
     }
-    
+
     try {
       setLoading(true);
       setError(null);
-      
+
       // เตรียมข้อมูลตามแท็บที่เลือก
       let dataToSend = { ...formData };
-      
+
       // แก้ไขข้อมูลที่จะส่งไปตาม source ที่เลือก
       if (activeSource === 'text' && formData.text) {
         // ใช้ข้อความจากแท็บ Text เป็นเนื้อหาในการออกข้อสอบ
-        dataToSend.additionalInstructions = 
+        dataToSend.additionalInstructions =
           `${dataToSend.additionalInstructions} Generate questions based on the following text content: ${formData.text}`;
-        
+
         if (!dataToSend.topic || dataToSend.topic.trim() === '') {
           // ถ้าไม่มีหัวข้อ ให้ใช้ 'Text Content' เป็นหัวข้อ
           dataToSend.topic = 'Text Content';
         }
       } else if (activeSource === 'webpage' && formData.webpage) {
         // ใช้ URL เว็บไซต์เป็นเนื้อหาในการออกข้อสอบ
-        dataToSend.additionalInstructions = 
+        dataToSend.additionalInstructions =
           `${dataToSend.additionalInstructions} Generate questions based on content from this webpage URL: ${formData.webpage}`;
-        
+
         if (!dataToSend.topic || dataToSend.topic.trim() === '') {
           // ถ้าไม่มีหัวข้อ ให้ใช้ URL เป็นหัวข้อ
           dataToSend.topic = `Webpage: ${formData.webpage}`;
         }
       }
-      
+
       // Call API to generate quiz
       const response = await quizService.generateQuiz(dataToSend);
-      
+
       if (response.success) {
         // Store generated quiz in context
         setGeneratedQuiz({
           ...response.data,
           formData: dataToSend
         });
-        
+
         // Navigate to the result page
         navigate('/result');
       } else {
@@ -141,7 +141,7 @@ const CreateQuizPage = () => {
       setLoading(false);
     }
   };
-  
+
   return (
     <Container fluid className="py-4 px-4">
       {/* Header section with back and ideas buttons */}
@@ -154,8 +154,8 @@ const CreateQuizPage = () => {
           </Link>
         </Col>
         <Col xs={6} className="text-end">
-          <Button 
-            variant="warning" 
+          <Button
+            variant="warning"
             className="rounded-pill shadow-sm"
             onClick={handleIdeasClick}
           >
@@ -163,7 +163,7 @@ const CreateQuizPage = () => {
           </Button>
         </Col>
       </Row>
-      
+
       {/* Main content card */}
       <Row className="justify-content-center">
         <Col lg={10} xl={8}>
@@ -179,17 +179,17 @@ const CreateQuizPage = () => {
                   Build a custom quiz from any source - topic, text, webpage, or document
                 </p>
               </div>
-              
+
               {/* Input source tabs - UPDATED FOR BETTER VISIBILITY */}
-              <Nav 
-                variant="pills" 
+              <Nav
+                variant="pills"
                 className="nav-justified bg-light p-2 rounded-pill mb-4"
                 activeKey={activeSource}
                 onSelect={(key) => setActiveSource(key)}
               >
                 <Nav.Item>
-                  <Nav.Link 
-                    eventKey="topic" 
+                  <Nav.Link
+                    eventKey="topic"
                     className={`rounded-pill ${activeSource === 'topic' ? 'bg-white shadow-sm text-primary' : 'text-dark'}`}
                   >
                     <div className="d-flex align-items-center justify-content-center">
@@ -199,8 +199,8 @@ const CreateQuizPage = () => {
                   </Nav.Link>
                 </Nav.Item>
                 <Nav.Item>
-                  <Nav.Link 
-                    eventKey="text" 
+                  <Nav.Link
+                    eventKey="text"
                     className={`rounded-pill ${activeSource === 'text' ? 'bg-white shadow-sm text-primary' : 'text-dark'}`}
                   >
                     <div className="d-flex align-items-center justify-content-center">
@@ -210,8 +210,8 @@ const CreateQuizPage = () => {
                   </Nav.Link>
                 </Nav.Item>
                 <Nav.Item>
-                  <Nav.Link 
-                    eventKey="webpage" 
+                  <Nav.Link
+                    eventKey="webpage"
                     className={`rounded-pill ${activeSource === 'webpage' ? 'bg-white shadow-sm text-primary' : 'text-dark'}`}
                   >
                     <div className="d-flex align-items-center justify-content-center">
@@ -221,8 +221,8 @@ const CreateQuizPage = () => {
                   </Nav.Link>
                 </Nav.Item>
                 <Nav.Item>
-                  <Nav.Link 
-                    eventKey="file" 
+                  <Nav.Link
+                    eventKey="file"
                     className={`rounded-pill ${activeSource === 'file' ? 'bg-white shadow-sm text-primary' : 'text-dark'}`}
                   >
                     <div className="d-flex align-items-center justify-content-center">
@@ -233,7 +233,7 @@ const CreateQuizPage = () => {
                   </Nav.Link>
                 </Nav.Item>
               </Nav>
-              
+
               {/* Form content based on active source */}
               <Form noValidate validated={validated} onSubmit={handleSubmit}>
                 {/* Topic input section */}
@@ -291,8 +291,8 @@ const CreateQuizPage = () => {
                         className="border-light shadow-sm p-3"
                         disabled={isLoadingWebpage}
                       />
-                      <Button 
-                        variant="outline-secondary" 
+                      <Button
+                        variant="outline-secondary"
                         onClick={handleLoadWebpage}
                         disabled={!formData.webpage || isLoadingWebpage}
                       >
@@ -346,7 +346,7 @@ const CreateQuizPage = () => {
                     </p>
                   </div>
                 )}
-                
+
                 {/* Quiz settings - displaying in a 2-column layout on wider screens */}
                 <Row className="mb-4 gx-4">
                   <Col md={6} className="mb-3 mb-md-0">
@@ -364,7 +364,7 @@ const CreateQuizPage = () => {
                       </Form.Select>
                     </Form.Group>
                   </Col>
-                  
+
                   <Col md={6}>
                     <Form.Group controlId="numberOfQuestions">
                       <Form.Label>Number of questions</Form.Label>
@@ -384,7 +384,7 @@ const CreateQuizPage = () => {
                     </Form.Group>
                   </Col>
                 </Row>
-                
+
                 {/* Additional instructions */}
                 <Form.Group className="mb-4" controlId="additionalInstructions">
                   <Form.Label>Additional instructions (optional)</Form.Label>
@@ -398,7 +398,7 @@ const CreateQuizPage = () => {
                     className="border-light shadow-sm"
                   />
                 </Form.Group>
-                
+
                 {/* Two more settings in a 2-column layout */}
                 <Row className="mb-4 gx-4">
                   <Col md={6} className="mb-3 mb-md-0">
@@ -414,7 +414,7 @@ const CreateQuizPage = () => {
                       />
                     </Form.Group>
                   </Col>
-                  
+
                   <Col md={6}>
                     <Form.Group controlId="language">
                       <Form.Label>Output language</Form.Label>
@@ -430,7 +430,7 @@ const CreateQuizPage = () => {
                     </Form.Group>
                   </Col>
                 </Row>
-                
+
                 {/* Generate button */}
                 <div className="d-grid">
                   <Button
