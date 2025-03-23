@@ -1,7 +1,11 @@
+// backend/index.js - Updated version with new routes
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import quizRoutes from './src/routes/quizRoutes.js';
+import authRoutes from './src/routes/authRoutes.js';
+import userRoutes from './src/routes/userRoutes.js';
+import schoolRoutes from './src/routes/schoolRoutes.js';
 import { testConnection } from './src/config/db.js';
 import { logger, httpLogger } from './src/utils/logger.js';
 import applySecurityMiddleware from './src/middlewares/security.js';
@@ -25,6 +29,14 @@ const PORT = process.env.PORT || 3001;
 import fs from 'fs';
 if (!fs.existsSync('logs')) {
   fs.mkdirSync('logs');
+}
+
+// Create uploads directory if it doesn't exist
+if (!fs.existsSync('uploads')) {
+  fs.mkdirSync('uploads');
+}
+if (!fs.existsSync('uploads/profile-images')) {
+  fs.mkdirSync('uploads/profile-images');
 }
 
 // Apply security middleware
@@ -58,6 +70,12 @@ testConnection()
 
 // API Routes
 app.use('/api/quizzes', quizRoutes);
+app.use('/api/auth', authRoutes); // New authentication routes
+app.use('/api/users', userRoutes); // New user management routes
+app.use('/api/schools', schoolRoutes); // New school management routes
+
+// Serve static files for profile images
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Home route
 app.get('/api', (req, res) => {
