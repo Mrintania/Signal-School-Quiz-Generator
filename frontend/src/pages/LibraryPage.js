@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Container, Row, Col, Alert } from 'react-bootstrap';
 import { LibraryProvider, useLibrary } from '../context/LibraryContext';
 
@@ -25,7 +25,8 @@ const LibraryPageContent = () => {
     setError,
     selectedFolder,
     selectedQuiz,
-    setSelectedQuiz
+    setSelectedQuiz,
+    fetchQuizzes
   } = useLibrary();
   
   // Modal visibility states
@@ -35,6 +36,11 @@ const LibraryPageContent = () => {
   const [showRenameQuizModal, setShowRenameQuizModal] = useState(false);
   const [showDeleteQuizModal, setShowDeleteQuizModal] = useState(false);
   const [showMoveModal, setShowMoveModal] = useState(false);
+  
+  // Load quizzes when component mounts
+  useEffect(() => {
+    fetchQuizzes();
+  }, [fetchQuizzes]);
   
   // Folder action handler
   const handleFolderAction = (folder, action) => {
@@ -57,6 +63,8 @@ const LibraryPageContent = () => {
       setShowMoveModal(true);
     }
   };
+  
+  console.log('Rendering LibraryPageContent');
   
   return (
     <Container fluid className="py-4 px-4">
@@ -139,6 +147,7 @@ const LibraryPageContent = () => {
 
 // Main Library Page component
 const LibraryPage = () => {
+  console.log('Rendering LibraryPage');
   return (
     <LibraryProvider>
       <LibraryPageContent />

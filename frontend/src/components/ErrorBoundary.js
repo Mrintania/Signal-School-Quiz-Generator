@@ -1,3 +1,4 @@
+// frontend/src/components/ErrorBoundary.js
 import React, { Component } from 'react';
 import { Alert, Button, Card } from 'react-bootstrap';
 
@@ -50,15 +51,15 @@ class ErrorBoundary extends Component {
                 <path d="M7.002 11a1 1 0 1 1 2 0 1 1 0 0 1-2 0zM7.1 4.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 4.995z"/>
               </svg>
             </div>
-            <h2 className="mb-3">Something went wrong</h2>
+            <h2 className="mb-3">เกิดข้อผิดพลาดบางอย่าง</h2>
             <p className="text-muted mb-4">
-              We apologize for the inconvenience. The error has been logged and we're working on fixing it.
+              เราขออภัยในความไม่สะดวก ข้อผิดพลาดนี้ได้ถูกบันทึกไว้แล้วและเรากำลังดำเนินการแก้ไข
             </p>
             
             {process.env.NODE_ENV !== 'production' && (
               <Alert variant="danger" className="mb-4 text-start">
                 <details style={{ whiteSpace: 'pre-wrap' }}>
-                  <summary>Show error details</summary>
+                  <summary>แสดงรายละเอียดข้อผิดพลาด</summary>
                   <p>{this.state.error && this.state.error.toString()}</p>
                   <p>Component Stack:</p>
                   <p>{this.state.errorInfo && this.state.errorInfo.componentStack}</p>
@@ -72,13 +73,13 @@ class ErrorBoundary extends Component {
                 onClick={this.handleReset}
                 className="mb-2"
               >
-                Try Again
+                ลองใหม่อีกครั้ง
               </Button>
               <Button 
                 variant="outline-secondary" 
                 onClick={() => window.location.href = '/'}
               >
-                Go to Home Page
+                กลับไปยังหน้าหลัก
               </Button>
             </div>
           </Card.Body>

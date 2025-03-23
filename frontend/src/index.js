@@ -3,6 +3,11 @@ import ReactDOM from 'react-dom/client';
 import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
+import { setupGlobalErrorHandler } from './utils/globalErrorHandler';
+
+
+// Setup global error handler
+setupGlobalErrorHandler();
 
 // จากการดูโค้ดของคุณ พบว่าคุณไม่ได้ใช้ createBrowserRouter
 // แต่ใช้ BrowserRouter ใน App.js ดังนั้นเราต้องแก้ไขใน App.js แทน

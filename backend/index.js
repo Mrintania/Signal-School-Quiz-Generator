@@ -1,13 +1,14 @@
 import express from 'express';
+import cors from 'cors';
 import dotenv from 'dotenv';
 import quizRoutes from './src/routes/quizRoutes.js';
 import { testConnection } from './src/config/db.js';
 import { logger, httpLogger } from './src/utils/logger.js';
 import applySecurityMiddleware from './src/middlewares/security.js';
-import { sanitizeAll } from './src/utils/validator.js';
 import { generalLimiter } from './src/middlewares/rateLimiter.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { sanitizeAll } from './src/utils/validator.js';
 
 // Get directory paths for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -105,6 +106,5 @@ app.use((err, req, res, next) => {
 
 // Start the server
 app.listen(PORT, () => {
-  logger.info(`Server is running on port ${PORT}`);
-  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`Server is running on port ${PORT}`);
 });
