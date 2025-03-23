@@ -1,43 +1,41 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Navbar from './Navbar';
 
 const Layout = () => {
-  // กำหนดความกว้างของ Sidebar คงที่
-  const SIDEBAR_WIDTH = 250; // px
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 992);
+  
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 992);
+    };
+    
+    window.addEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
+  }, []);
   
   return (
     <div className="d-flex">
-      {/* Sidebar ด้านซ้าย - กำหนดความกว้างคงที่ */}
-      <div 
-        className="sidebar-wrapper"
-        style={{ 
-          width: `${SIDEBAR_WIDTH}px`, 
-          flexShrink: 0,
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          height: '100vh',
-          zIndex: 1030
-        }}
-      >
-        <Sidebar />
-      </div>
+      {/* Sidebar */}
+      <Sidebar />
       
-      {/* พื้นที่หลักด้านขวา - ความกว้างจะเป็นส่วนที่เหลือ */}
+      {/* Main content area */}
       <div 
         className="content-wrapper" 
         style={{ 
-          width: `calc(100% - ${SIDEBAR_WIDTH}px)`,
-          marginLeft: `${SIDEBAR_WIDTH}px`,
-          minHeight: '100vh'
+          width: '100%',
+          minHeight: '100vh',
+          marginLeft: isMobile ? '0' : '250px',
+          transition: 'margin 0.3s ease'
         }}
       >
-        {/* Navbar จะอยู่ด้านบนของพื้นที่หลัก */}
+        {/* Navbar */}
         <Navbar />
         
-        {/* เนื้อหาหลัก */}
+        {/* Main content */}
         <main className="py-3 px-4">
           <Outlet />
         </main>
