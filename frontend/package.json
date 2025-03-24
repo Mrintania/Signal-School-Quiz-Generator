@@ -26,7 +26,8 @@
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
-    "analyze": "source-map-explorer 'build/static/js/*.js'"
+    "analyze": "source-map-explorer 'build/static/js/*.js'",
+    "netlify-build": "CI=false npm run build"
   },
   "eslintConfig": {
     "extends": [
