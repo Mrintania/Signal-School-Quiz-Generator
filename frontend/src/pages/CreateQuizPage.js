@@ -3,10 +3,16 @@ import { Container, Row, Col, Form, Button, Spinner, Card, Nav, InputGroup } fro
 import { useNavigate, Link } from 'react-router-dom';
 import { quizService } from '../services/api';
 import { useQuizContext } from '../context/QuizContext';
+import { sampleTopics, handleIdeasClick } from '../utils/ideas';
 
 const CreateQuizPage = () => {
   const navigate = useNavigate();
   const { setGeneratedQuiz, setLoading, loading, setError } = useQuizContext();
+
+  const handleIdeasButtonClick = () => {
+    handleIdeasClick(setFormData, setActiveSource);
+  };
+  
 
   // Input source tabs
   const [activeSource, setActiveSource] = useState('topic');
@@ -37,34 +43,6 @@ const CreateQuizPage = () => {
       ...prevData,
       [name]: value
     }));
-  };
-
-  // ฟังก์ชันสำหรับปุ่ม Ideas
-  const handleIdeasClick = () => {
-    // รายชื่อวิชาตัวอย่าง
-    const sampleTopics = [
-      "คณิตศาสตร์: การหาพื้นที่รูปเรขาคณิต",
-      "ฟิสิกส์: กฎการเคลื่อนที่ของนิวตัน",
-      "ชีววิทยา: ระบบหมุนเวียนเลือดในร่างกายมนุษย์",
-      "ภาษาไทย: คำราชาศัพท์และการใช้",
-      "ประวัติศาสตร์: อาณาจักรสุโขทัย",
-      "ภาษาอังกฤษ: Past Simple Tense",
-      "เคมี: ตารางธาตุและสมบัติของธาตุ",
-      "สังคมศึกษา: ระบบเศรษฐกิจพอเพียง",
-      "วิทยาการคำนวณ: การเขียนโปรแกรมเบื้องต้นด้วย Python",
-      "ศิลปะ: ทัศนธาตุในงานศิลปะ"
-    ];
-
-    // สุ่มเลือกหัวข้อหนึ่งจากรายการ
-    const randomTopic = sampleTopics[Math.floor(Math.random() * sampleTopics.length)];
-
-    // อัปเดต state และเปลี่ยนแท็บไปที่ Topic
-    setFormData(prevData => ({
-      ...prevData,
-      topic: randomTopic
-    }));
-
-    setActiveSource('topic');
   };
 
   // ฟังก์ชันโหลดเว็บเพจ (จำลองการโหลด)
@@ -157,7 +135,7 @@ const CreateQuizPage = () => {
           <Button
             variant="warning"
             className="rounded-pill shadow-sm"
-            onClick={handleIdeasClick}
+            onClick={handleIdeasButtonClick}
           >
             <span className="me-2">💡</span> Ideas
           </Button>

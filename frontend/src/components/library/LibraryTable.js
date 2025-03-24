@@ -37,9 +37,9 @@ const LibraryTable = ({ onFolderAction, onQuizAction }) => {
 
     return (
         <>
-            <Card className="border-0 shadow-sm">
+            <Card className="border-0 shadow-sm" style={{}}>
                 <Card.Body className="p-0">
-                    <Table responsive hover className="mb-0">
+                    <Table responsive hover className="mb-0" >
                         <thead className="bg-light border-bottom">
                             <tr>
                                 <th
@@ -110,6 +110,8 @@ const LibraryTable = ({ onFolderAction, onQuizAction }) => {
                     </Table>
                 </Card.Body>
             </Card>
+
+
 
             {/* Add pagination component */}
             <Pagination
