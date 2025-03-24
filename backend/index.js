@@ -1,4 +1,3 @@
-// backend/index.js - Updated version with new routes
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -14,6 +13,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { sanitizeAll } from './src/utils/validator.js';
 import dashboardRoutes from './src/routes/dashboardRoutes.js';
+
 
 
 // Get directory paths for ES modules
@@ -56,6 +56,11 @@ app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 // Apply input sanitization
 app.use(sanitizeAll);
+app.use('/api/quizzes', quizRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/schools', schoolRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 
 // Test database connection
 testConnection()
@@ -124,7 +129,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-app.use('/api/dashboard', dashboardRoutes);
+
 
 // Start the server
 app.listen(PORT, () => {

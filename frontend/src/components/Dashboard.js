@@ -15,58 +15,71 @@ const Dashboard = () => {
     });
 
     useEffect(() => {
-        const fetchStats = async () => {
+        const fetchDashboardData = async () => {
             try {
-                // Fetch all quizzes for stats
-                const response = await quizService.getAllQuizzes();
+                // ดึงสถิติแดชบอร์ดจาก API ใหม่
+                const statsResponse = await quizService.getDashboardStats();
 
-                if (response.success) {
-                    const quizzes = response.data;
+                // ดึงข้อสอบล่าสุดสำหรับกิจกรรมล่าสุด
+                const recentQuizzesResponse = await quizService.getRecentQuizzes(5);
 
-                    // Calculate stats
-                    const multipleChoiceCount = quizzes.filter(q => q.question_type === 'Multiple Choice').length;
-                    const essayCount = quizzes.filter(q => q.question_type === 'Essay').length;
+                if (statsResponse.success && recentQuizzesResponse.success) {
+                    // รวมข้อสอบจากทุกหมวดหมู่เข้าด้วยกัน
+                    const allRecentQuizzes = [
+                        ...recentQuizzesResponse.data.today,
+                        ...recentQuizzesResponse.data.yesterday,
+                        ...recentQuizzesResponse.data.lastWeek,
+                        ...recentQuizzesResponse.data.lastMonth,
+                        ...recentQuizzesResponse.data.older
+                    ];
 
-                    // Get question count
-                    let totalQuestions = 0;
-                    let questionsPerQuiz = [];
+                    // เรียงตามวันที่ล่าสุด
+                    const sortedRecentQuizzes = allRecentQuizzes.sort((a, b) =>
+                        new Date(b.createdAt) - new Date(a.createdAt)
+                    ).slice(0, 5); // แสดงเฉพาะ 5 รายการแรก
 
-                    // For detailed stats, we need to fetch each quiz
-                    const detailedPromises = quizzes.slice(0, 10).map(quiz => quizService.getQuizById(quiz.id));
-                    const detailedResults = await Promise.allSettled(detailedPromises);
+                    // คำนวณจำนวนข้อสอบแต่ละประเภท
+                    const multipleChoiceCount = statsResponse.data.quizCount ?
+                        allRecentQuizzes.filter(q => q.questionType === 'Multiple Choice').length : 0;
 
-                    const successfulResults = detailedResults
-                        .filter(result => result.status === 'fulfilled' && result.value.success)
-                        .map(result => result.value.data);
+                    const essayCount = statsResponse.data.quizCount ?
+                        allRecentQuizzes.filter(q => q.questionType === 'Essay').length : 0;
 
-                    totalQuestions = successfulResults.reduce(
-                        (total, quiz) => total + (quiz.questions ? quiz.questions.length : 0),
-                        0
-                    );
-
-                    questionsPerQuiz = successfulResults.map(quiz => ({
-                        id: quiz.id,
-                        title: quiz.title,
-                        count: quiz.questions ? quiz.questions.length : 0
-                    }));
-
-                    // Get recent activity (for now, just sort by date)
-                    const recentActivity = [...quizzes]
-                        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-                        .slice(0, 5);
-
+                    // อัปเดตสเตท
                     setStats({
-                        totalQuizzes: quizzes.length,
+                        totalQuizzes: statsResponse.data.quizCount || 0,
                         multipleChoiceCount,
                         essayCount,
-                        totalQuestions,
-                        questionsPerQuiz,
-                        recentActivity,
+                        totalQuestions: 0, // จะคำนวณเมื่อดึงข้อมูลละเอียดเพิ่มเติม
+                        recentActivity: sortedRecentQuizzes,
                         loading: false,
                         error: null
                     });
+
+                    // ดึงข้อมูลละเอียดของข้อสอบล่าสุดเพื่อนับจำนวนคำถาม
+                    if (sortedRecentQuizzes.length > 0) {
+                        const detailedPromises = sortedRecentQuizzes.map(quiz =>
+                            quizService.getQuizById(quiz.id)
+                        );
+
+                        const detailedResults = await Promise.allSettled(detailedPromises);
+
+                        const successfulResults = detailedResults
+                            .filter(result => result.status === 'fulfilled' && result.value.success)
+                            .map(result => result.value.data);
+
+                        const totalQuestions = successfulResults.reduce(
+                            (total, quiz) => total + (quiz.questions ? quiz.questions.length : 0),
+                            0
+                        );
+
+                        setStats(prevStats => ({
+                            ...prevStats,
+                            totalQuestions
+                        }));
+                    }
                 } else {
-                    throw new Error(response.message || 'Failed to fetch stats');
+                    throw new Error(statsResponse.message || 'Failed to fetch stats');
                 }
             } catch (error) {
                 console.error('Error fetching dashboard stats:', error);
@@ -78,7 +91,7 @@ const Dashboard = () => {
             }
         };
 
-        fetchStats();
+        fetchDashboardData();
     }, []);
 
     // Format date
@@ -211,10 +224,10 @@ const Dashboard = () => {
                                                     </h6>
                                                     <div className="d-flex justify-content-between align-items-center">
                                                         <small className="text-muted">
-                                                            Created {getTimeAgo(item.created_at)}
+                                                            Created {getTimeAgo(item.createdAt)}
                                                         </small>
-                                                        <Badge bg={item.question_type === 'Multiple Choice' ? 'info' : 'warning'} className="text-white">
-                                                            {item.question_type}
+                                                        <Badge bg={item.questionType === 'Multiple Choice' ? 'info' : 'warning'} className="text-white">
+                                                            {item.questionType}
                                                         </Badge>
                                                     </div>
                                                 </div>

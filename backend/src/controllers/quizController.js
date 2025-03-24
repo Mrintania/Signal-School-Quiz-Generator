@@ -1,21 +1,24 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { pool } from '../config/db.js';
+import { logger } from '../utils/logger.js';
 import Quiz from '../models/quiz.js';
-import { invalidateCache } from '../middlewares/cacheMiddleware.js';
-
-invalidateCache('/api/dashboard');
-
 
 // Initialize Google Gemini API with error handling
 let genAI;
 try {
-  genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY);
+  if (process.env.GOOGLE_GEMINI_API_KEY) {
+    genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY);
+    logger.info('Google Gemini API initialized successfully');
+  } else {
+    logger.warn('Google Gemini API key not found in environment variables');
+  }
 } catch (error) {
-  console.error('Error initializing Google Gemini API:', error);
+  logger.error('Error initializing Google Gemini API:', error);
 }
 
-// Helper function to handle API errors
+// Helper function to handle API errors consistently
 const handleApiError = (res, error, message = 'An error occurred') => {
-  console.error(`API Error: ${message}`, error);
+  logger.error(`API Error: ${message}`, error);
   return res.status(500).json({
     success: false,
     message: message,
@@ -29,7 +32,7 @@ class QuizController {
     try {
       const { topic, questionType, numberOfQuestions, additionalInstructions, studentLevel, language } = req.body;
 
-      // Validate required fields (additional protection beyond middleware)
+      // Validate required fields
       if (!topic || !questionType || !numberOfQuestions) {
         return res.status(400).json({
           success: false,
@@ -39,7 +42,7 @@ class QuizController {
 
       // Check if Google Gemini API is initialized
       if (!genAI) {
-        return res.status(500).json({
+        return res.status(503).json({
           success: false,
           message: 'AI service is currently unavailable'
         });
@@ -58,34 +61,29 @@ class QuizController {
       });
 
       // Request generation with timeout handling
-      const generationPromise = model.generateContent(prompt);
-
-      // Add timeout handling
       const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => reject(new Error('AI generation timed out')), 30000); // 30 seconds timeout
       });
-
+      
+      const generationPromise = model.generateContent(prompt);
       const result = await Promise.race([generationPromise, timeoutPromise]);
       const responseText = result.response.text();
-
+      
+      // Parse response
       let quizData;
       try {
-        // Parse response considering different formats
         if (responseText.includes('```json') && responseText.includes('```')) {
           const jsonString = responseText.split('```json')[1].split('```')[0].trim();
           quizData = JSON.parse(jsonString);
         } else if (responseText.includes('```') && responseText.includes('```')) {
-          // For code blocks without language specification
           const jsonString = responseText.split('```')[1].split('```')[0].trim();
           quizData = JSON.parse(jsonString);
         } else {
-          // Try parsing the entire response as JSON
           quizData = JSON.parse(responseText);
         }
       } catch (error) {
-        console.error('Error parsing Gemini response:', error);
-
-        // Return more detailed error information for debugging
+        logger.error('Error parsing Gemini response:', error);
+        
         return res.status(500).json({
           success: false,
           message: 'Failed to parse quiz data from AI response',
@@ -94,7 +92,7 @@ class QuizController {
         });
       }
 
-      // Validate the response data structure
+      // Validate response structure
       if (!quizData.questions || !Array.isArray(quizData.questions)) {
         return res.status(500).json({
           success: false,
@@ -124,9 +122,6 @@ class QuizController {
     try {
       const quizData = req.body;
 
-      // Get user ID from the authentication token
-      const userId = req.user.userId;
-
       // Validate required fields
       if (!quizData.title || !quizData.questions || quizData.questions.length === 0) {
         return res.status(400).json({
@@ -134,6 +129,10 @@ class QuizController {
           message: 'Required fields are missing'
         });
       }
+
+      // Get user ID from auth token if available
+      const userId = req.user?.userId || 1; // Default to user ID 1 if not authenticated
+      quizData.userId = userId;
 
       // Check for duplicate title and get suggested title if needed
       const titleCheck = await Quiz.checkDuplicateTitle(quizData.title);
@@ -144,16 +143,11 @@ class QuizController {
         quizData.title = finalTitle;
       }
 
-      // Add user ID to quiz data
-      quizData.userId = userId;
-
       // Save quiz to database
       const result = await Quiz.saveQuiz(quizData);
 
       if (result.success) {
-        // Invalidate dashboard cache after saving a quiz
-        invalidateCache('/api/dashboard');
-
+        logger.info(`Quiz saved successfully: ${finalTitle} (ID: ${result.quizId})`);
         return res.status(201).json({
           success: true,
           message: 'Quiz saved successfully',
@@ -162,6 +156,7 @@ class QuizController {
           isDuplicateTitle: titleCheck.isDuplicate
         });
       } else {
+        logger.error('Failed to save quiz:', result.error);
         return res.status(500).json({
           success: false,
           message: 'Failed to save quiz',
@@ -173,64 +168,86 @@ class QuizController {
     }
   }
 
-  // Get all quizzes
+  // Get all quizzes with optional pagination
   static async getAllQuizzes(req, res) {
     try {
-      console.log('Fetching all quizzes - Starting');
-
+      logger.info('Fetching all quizzes');
+      
       // Get pagination parameters
       const page = parseInt(req.query.page) || 1;
       const limit = parseInt(req.query.limit) || 100;
       const offset = (page - 1) * limit;
-
-      console.log(`Pagination: page=${page}, limit=${limit}, offset=${offset}`);
-
-      // Use the simplest possible query to start
-      const query = 'SELECT * FROM quizzes ORDER BY created_at DESC LIMIT ? OFFSET ?';
-      const countQuery = 'SELECT COUNT(*) as total FROM quizzes';
-
-      console.log('Executing count query');
-      // Execute count query
-      const [countRows] = await pool.execute(countQuery);
-      console.log('Count query result:', countRows);
-
-      console.log('Executing data query');
-      // Execute data query
-      const [rows] = await pool.execute(query, [limit, offset]);
-      console.log(`Data query returned ${rows.length} rows`);
-
-      const total = countRows[0].total;
-
-      // Return success response
-      return res.status(200).json({
-        success: true,
-        data: rows,
-        pagination: {
-          total,
-          page,
-          limit,
-          totalPages: Math.ceil(total / limit)
-        }
-      });
-    } catch (error) {
-      console.error('Detailed quiz fetching error:', error);
-      console.error('Error stack:', error.stack);
-
-      // Check if it's a database-related error
-      if (error.code && (error.code.startsWith('ER_') || error.errno)) {
-        console.error('Database error details:', {
-          code: error.code,
-          errno: error.errno,
-          sqlMessage: error.sqlMessage,
-          sqlState: error.sqlState
+      
+      // Get user ID from auth token if available
+      const userId = req.user?.userId;
+      
+      // Build query parameters
+      let queryParams = [];
+      let query = 'SELECT * FROM quizzes';
+      let countQuery = 'SELECT COUNT(*) as total FROM quizzes';
+      
+      // Filter by user ID if available
+      if (userId) {
+        query += ' WHERE user_id = ?';
+        countQuery += ' WHERE user_id = ?';
+        queryParams.push(userId);
+      }
+      
+      // Add ordering and pagination
+      query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+      queryParams.push(limit, offset);
+      
+      // Execute queries with error handling
+      try {
+        // Get total count
+        const [countRows] = await pool.execute(countQuery, userId ? [userId] : []);
+        const total = countRows[0].total;
+        
+        // Get paginated data
+        const [rows] = await pool.execute(query, queryParams);
+        
+        logger.info(`Retrieved ${rows.length} quizzes out of ${total} total`);
+        
+        return res.status(200).json({
+          success: true,
+          data: rows,
+          pagination: {
+            total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit)
+          }
+        });
+      } catch (dbError) {
+        logger.error('Database error in getAllQuizzes:', dbError);
+        
+        // Return empty results rather than error for better UX
+        return res.status(200).json({
+          success: true,
+          data: [],
+          pagination: {
+            total: 0,
+            page,
+            limit,
+            totalPages: 0
+          },
+          error: process.env.NODE_ENV === 'development' ? dbError.message : 'Database error'
         });
       }
-
-      return res.status(500).json({
-        success: false,
-        message: 'Error fetching quizzes',
-        details: error.message,
-        errorCode: error.code || 'UNKNOWN_ERROR'
+    } catch (error) {
+      logger.error('Error in getAllQuizzes:', error);
+      
+      // Return empty results rather than error for better UX
+      return res.status(200).json({
+        success: true,
+        data: [],
+        pagination: {
+          total: 0,
+          page: 1,
+          limit: 10,
+          totalPages: 0
+        },
+        error: process.env.NODE_ENV === 'development' ? error.message : 'An error occurred'
       });
     }
   }
@@ -298,64 +315,6 @@ class QuizController {
     } catch (error) {
       return handleApiError(res, error, 'Error deleting quiz');
     }
-  }
-
-  // Create prompt for Google Gemini API
-  static createPrompt(topic, questionType, numberOfQuestions, additionalInstructions, studentLevel, language) {
-    // Set language for quiz
-    const languagePrompt = language === 'thai'
-      ? "Create the quiz in Thai language."
-      : "Create the quiz in English language.";
-
-    let prompt = `Create a ${questionType} quiz about "${topic}" with ${numberOfQuestions} questions. ${languagePrompt}`;
-
-    if (studentLevel) {
-      prompt += ` The quiz is intended for ${studentLevel} level students.`;
-    }
-
-    // Add any additional instructions
-    if (additionalInstructions) {
-      prompt += ` Additional instructions: ${additionalInstructions}`;
-
-      // Emphasize avoiding duplication if requested
-      if (additionalInstructions.includes("avoid duplication") ||
-        additionalInstructions.includes("different questions")) {
-        prompt += ` IMPORTANT: Please make sure to generate completely new and different questions that do not duplicate any previous questions on this topic.`;
-      }
-    }
-
-    // Add format instructions based on question type
-    if (questionType === 'Multiple Choice') {
-      prompt += ` For each question, provide 4 options (A, B, C, D), indicate the correct answer, and include a brief explanation of why the answer is correct.`;
-      prompt += ` Return the quiz in the following JSON format ONLY (do not include any other text or explanations outside the JSON):
-      {
-        "questions": [
-          {
-            "questionText": "Question text here",
-            "options": [
-              { "text": "Option A", "isCorrect": false },
-              { "text": "Option B", "isCorrect": true },
-              { "text": "Option C", "isCorrect": false },
-              { "text": "Option D", "isCorrect": false }
-            ],
-            "explanation": "Explanation of the correct answer"
-          }
-        ]
-      }`;
-    } else if (questionType === 'Essay') {
-      prompt += ` For each question, provide a brief guideline on what a good answer should include.`;
-      prompt += ` Return the quiz in the following JSON format ONLY (do not include any other text or explanations outside the JSON):
-      {
-        "questions": [
-          {
-            "questionText": "Question text here",
-            "explanation": "Guidelines for a good answer"
-          }
-        ]
-      }`;
-    }
-
-    return prompt;
   }
 
   // Rename a quiz
@@ -491,16 +450,16 @@ class QuizController {
   static async checkTitleAvailability(req, res) {
     try {
       const { title } = req.query;
-
+      
       if (!title) {
         return res.status(400).json({
           success: false,
           message: 'Title is required'
         });
       }
-
+      
       const result = await Quiz.checkDuplicateTitle(title);
-
+      
       return res.status(200).json({
         success: true,
         data: result
@@ -508,6 +467,64 @@ class QuizController {
     } catch (error) {
       return handleApiError(res, error, 'Error checking title availability');
     }
+  }
+
+  // Create prompt for Google Gemini API
+  static createPrompt(topic, questionType, numberOfQuestions, additionalInstructions, studentLevel, language) {
+    // Set language for quiz
+    const languagePrompt = language === 'thai'
+      ? "Create the quiz in Thai language."
+      : "Create the quiz in English language.";
+
+    let prompt = `Create a ${questionType} quiz about "${topic}" with ${numberOfQuestions} questions. ${languagePrompt}`;
+
+    if (studentLevel) {
+      prompt += ` The quiz is intended for ${studentLevel} level students.`;
+    }
+
+    // Add any additional instructions
+    if (additionalInstructions) {
+      prompt += ` Additional instructions: ${additionalInstructions}`;
+
+      // Emphasize avoiding duplication if requested
+      if (additionalInstructions.includes("avoid duplication") ||
+        additionalInstructions.includes("different questions")) {
+        prompt += ` IMPORTANT: Please make sure to generate completely new and different questions that do not duplicate any previous questions on this topic.`;
+      }
+    }
+
+    // Add format instructions based on question type
+    if (questionType === 'Multiple Choice') {
+      prompt += ` For each question, provide 4 options (A, B, C, D), indicate the correct answer, and include a brief explanation of why the answer is correct.`;
+      prompt += ` Return the quiz in the following JSON format ONLY (do not include any other text or explanations outside the JSON):
+      {
+        "questions": [
+          {
+            "questionText": "Question text here",
+            "options": [
+              { "text": "Option A", "isCorrect": false },
+              { "text": "Option B", "isCorrect": true },
+              { "text": "Option C", "isCorrect": false },
+              { "text": "Option D", "isCorrect": false }
+            ],
+            "explanation": "Explanation of the correct answer"
+          }
+        ]
+      }`;
+    } else if (questionType === 'Essay') {
+      prompt += ` For each question, provide a brief guideline on what a good answer should include.`;
+      prompt += ` Return the quiz in the following JSON format ONLY (do not include any other text or explanations outside the JSON):
+      {
+        "questions": [
+          {
+            "questionText": "Question text here",
+            "explanation": "Guidelines for a good answer"
+          }
+        ]
+      }`;
+    }
+
+    return prompt;
   }
 }
 

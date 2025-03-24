@@ -125,17 +125,17 @@ export const quizService = {
     const downloadUrl = `${API_URL}/quizzes/${quizId}/export/text`;
     window.open(downloadUrl, '_blank');
   },
-  
+
   // Update quiz questions
   updateQuizQuestions: async (quizId, questions) => {
     return handleApiRequest(() => api.patch(`/quizzes/${quizId}/questions`, { questions }));
   },
-  
+
   // Check title availability
   checkTitleAvailability: async (title) => {
     return handleApiRequest(() => api.get('/quizzes/check-title', { params: { title } }));
   },
-  
+
   // Move quiz to folder
   moveQuiz: async (quizId, folderId) => {
     // For now, using localStorage for compatibility with existing code
@@ -144,14 +144,69 @@ export const quizService = {
       quizFolders[quizId] = folderId;
       localStorage.setItem('quizFolders', JSON.stringify(quizFolders));
       window.dispatchEvent(new Event('storage'));
-      
+
       // In a production environment, this would call the API instead
       // return handleApiRequest(() => api.patch(`/quizzes/${quizId}/move`, { folderId }));
-      
+
       return { success: true, message: 'Quiz moved successfully' };
     } catch (error) {
       console.error('Error moving quiz:', error);
       throw new ApiError('Failed to move quiz', 500);
+    }
+  },
+
+  getRecentQuizzes: async (limit = 10) => {
+    return handleApiRequest(() => api.get('/dashboard/recent-quizzes', { params: { limit } }));
+  },
+
+  getAllStats: async () => {
+    try {
+      // เรียกใช้ getAllQuizzes เพื่อนับจำนวนข้อสอบทั้งหมด
+      const quizResponse = await handleApiRequest(() => api.get('/quizzes'));
+
+      if (quizResponse.success) {
+        const quizCount = quizResponse.data.length;
+
+        // จำลองข้อมูลสำหรับส่วนที่ยังไม่มี
+        return {
+          success: true,
+          data: {
+            quizCount,
+            lessonPlanCount: 0,
+            teachingResourcesCount: 0,
+            slideDeckCount: 0,
+            flashcardSetCount: 0,
+            customChatbotCount: 0
+          }
+        };
+      }
+
+      return {
+        success: false,
+        message: 'Failed to fetch stats',
+        data: {
+          quizCount: 0,
+          lessonPlanCount: 0,
+          teachingResourcesCount: 0,
+          slideDeckCount: 0,
+          flashcardSetCount: 0,
+          customChatbotCount: 0
+        }
+      };
+    } catch (error) {
+      console.error('Error in getAllStats:', error);
+      return {
+        success: false,
+        message: error.message,
+        data: {
+          quizCount: 0,
+          lessonPlanCount: 0,
+          teachingResourcesCount: 0,
+          slideDeckCount: 0,
+          flashcardSetCount: 0,
+          customChatbotCount: 0
+        }
+      };
     }
   },
 };

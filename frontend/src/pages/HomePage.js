@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Container, Row, Col, Card, Dropdown } from 'react-bootstrap';
-import { Link, useNavigate } from 'react-router-dom';
+import { Container, Row, Col, Card } from 'react-bootstrap';
+import { useNavigate } from 'react-router-dom';
 import { quizService } from '../services/api';
 
 const HomePage = () => {
   const navigate = useNavigate();
   
-  // User data - can be connected to authentication system later
+  // User data
   const [userData, setUserData] = useState({
     name: 'Pornsupat Vutisuwan',
     role: 'Teacher'
@@ -66,6 +66,15 @@ const HomePage = () => {
       const quizDate = new Date(quiz.created_at);
       quizDate.setHours(0, 0, 0, 0);
       
+      // เพิ่มการจัดรูปแบบวันที่สำหรับแสดงผล
+      quiz.formattedDate = new Intl.DateTimeFormat('th-TH', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      }).format(new Date(quiz.created_at));
+      
       if (quizDate.getTime() === today.getTime()) {
         result.today.push(quiz);
       } else if (quizDate.getTime() === yesterday.getTime()) {
@@ -87,14 +96,20 @@ const HomePage = () => {
     const fetchQuizzes = async () => {
       try {
         setLoading(true);
-        // Get all quizzes from API
+        console.log('Fetching quizzes...');
+        
+        // ใช้ API getAllQuizzes ที่มีอยู่แล้ว
         const response = await quizService.getAllQuizzes();
+        console.log('API Response:', response);
         
         if (response.success) {
           // Sort quizzes by created_at in descending order
           const sortedQuizzes = response.data.sort((a, b) => 
             new Date(b.created_at) - new Date(a.created_at)
           );
+          
+          // แสดงจำนวนข้อสอบที่ได้รับ
+          console.log(`Retrieved ${sortedQuizzes.length} quizzes`);
           
           // Store all quizzes
           setQuizzes(sortedQuizzes);
@@ -103,8 +118,14 @@ const HomePage = () => {
           setQuizCount(sortedQuizzes.length);
           
           // Categorize quizzes by date
-          const categorized = categorizeQuizzesByDate(sortedQuizzes.slice(0, 10));
+          const categorized = categorizeQuizzesByDate(sortedQuizzes);
+          
+          // แสดงจำนวนในแต่ละหมวดหมู่
+          console.log(`Categorized: Today: ${categorized.today.length}, Yesterday: ${categorized.yesterday.length}, Last Week: ${categorized.lastWeek.length}, Last Month: ${categorized.lastMonth.length}, Older: ${categorized.older.length}`);
+          
           setCategorizedQuizzes(categorized);
+        } else {
+          console.error('API returned success=false:', response.message);
         }
       } catch (error) {
         console.error('Error fetching quizzes:', error);
@@ -132,14 +153,14 @@ const HomePage = () => {
   };
 
   // Timeline section component
-  const TimelineSection = ({ title, quizzes }) => {
+  const TimelineSection = ({ title, thaiTitle, quizzes }) => {
     if (!quizzes || quizzes.length === 0) return null;
     
     return (
       <>
         <div className="d-flex align-items-center mb-3">
           <div className="rounded-circle bg-success me-2" style={{ width: '12px', height: '12px' }}></div>
-          <h5 className="mb-0">{title}</h5>
+          <h5 className="mb-0">{thaiTitle || title}</h5>
         </div>
         
         {quizzes.map(quiz => (
@@ -152,14 +173,28 @@ const HomePage = () => {
             <div className="card-body">
               <div>
                 <h6 className="mb-0">{quiz.title}</h6>
-                <div className="mt-1">
-                  <span className="badge bg-light text-dark rounded-pill px-3 py-1">QUIZ</span>
+                <div className="d-flex justify-content-between align-items-center mt-1">
+                  <span className="badge bg-light text-dark rounded-pill px-3 py-1">
+                    {quiz.question_type === 'Multiple Choice' ? 'ข้อสอบปรนัย' : 'ข้อสอบอัตนัย'}
+                  </span>
+                  <small className="text-muted">{quiz.formattedDate}</small>
                 </div>
               </div>
             </div>
           </div>
         ))}
       </>
+    );
+  };
+
+  // Check if there are any quizzes in any category
+  const hasAnyQuizzes = () => {
+    return (
+      categorizedQuizzes.today.length > 0 ||
+      categorizedQuizzes.yesterday.length > 0 ||
+      categorizedQuizzes.lastWeek.length > 0 ||
+      categorizedQuizzes.lastMonth.length > 0 ||
+      categorizedQuizzes.older.length > 0
     );
   };
 
@@ -171,13 +206,6 @@ const HomePage = () => {
           <h1 className="mb-0">Hi, {userData.name}</h1>
           <p className="text-muted mb-0">{currentDate}</p>
         </div>
-        {/* <div>
-          <img 
-            src="https://cdn.pixabay.com/photo/2023/05/25/08/06/girl-8016935_1280.png" 
-            alt="Working girl" 
-            style={{ height: '100px' }} 
-          />
-        </div> */}
       </div>
       
       {/* Stats cards */}
@@ -191,7 +219,7 @@ const HomePage = () => {
           </Card>
         </Col>
         
-        <Col xs={6} sm={4} md={2}>
+        {/* <Col xs={6} sm={4} md={2}>
           <Card className="h-100 border-0 shadow-sm">
             <Card.Body className="text-center">
               <h1 className="display-4 fw-bold text-secondary">{stats.lessonPlan}</h1>
@@ -234,7 +262,7 @@ const HomePage = () => {
               <p className="mb-0 text-muted">Custom Chatbot</p>
             </Card.Body>
           </Card>
-        </Col>
+        </Col> */}
       </Row>
       
       {/* Recent contents section */}
@@ -257,10 +285,11 @@ const HomePage = () => {
           
           {/* Timeline content */}
           <div className="ps-4">
-            <TimelineSection title="Today" quizzes={categorizedQuizzes.today} />
-            <TimelineSection title="Last week" quizzes={categorizedQuizzes.lastWeek} />
-            <TimelineSection title="Last month" quizzes={categorizedQuizzes.lastMonth} />
-            <TimelineSection title="Older" quizzes={categorizedQuizzes.older} />
+            <TimelineSection title="Today" thaiTitle="Today" quizzes={categorizedQuizzes.today} />
+            <TimelineSection title="Yesterday" thaiTitle="Yesterday" quizzes={categorizedQuizzes.yesterday} />
+            <TimelineSection title="Last week" thaiTitle="Last week" quizzes={categorizedQuizzes.lastWeek} />
+            <TimelineSection title="Last month" thaiTitle="Last mount" quizzes={categorizedQuizzes.lastMonth} />
+            <TimelineSection title="Older" thaiTitle="ก่อนหน้านั้น" quizzes={categorizedQuizzes.older} />
             
             {loading && (
               <div className="text-center py-4">
@@ -270,14 +299,39 @@ const HomePage = () => {
               </div>
             )}
             
-            {!loading && Object.values(categorizedQuizzes).every(arr => arr.length === 0) && (
+            {!loading && !hasAnyQuizzes() && (
               <div className="text-center py-4 text-muted">
-                No recent content found
+                ยังไม่มีข้อสอบในระบบ กรุณาสร้างข้อสอบใหม่
               </div>
             )}
           </div>
         </div>
       </div>
+      
+      {/* Developer Testing Section in Development Mode */}
+      {/* {process.env.NODE_ENV === 'development' && (
+        <div className="mt-4 p-3 border rounded bg-light">
+          <h5>Developer Testing</h5>
+          <div className="d-flex gap-2 mt-2">
+            <button 
+              className="btn btn-sm btn-secondary" 
+              onClick={async () => {
+                try {
+                  const response = await fetch('/api/quizzes');
+                  const data = await response.json();
+                  console.log('Quizzes API response:', data);
+                  alert(`Found ${data.data?.length || 0} quizzes in database`);
+                } catch (error) {
+                  console.error('Error testing Quizzes API:', error);
+                  alert('Error: ' + error.message);
+                }
+              }}
+            >
+              Test Quizzes API
+            </button>
+          </div>
+        </div>
+      )} */}
     </Container>
   );
 };

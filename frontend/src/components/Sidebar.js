@@ -155,9 +155,10 @@ const Sidebar = () => {
                 variant="outline-success" 
                 className="w-100 py-3 rounded-pill d-flex align-items-center justify-content-center"
                 style={{ 
-                  borderColor: '#9EE37D', 
+                  borderColor: '#581845', 
                   color: '#333',
-                  backgroundColor: 'transparent'
+                  backgroundColor: 'transparent',
+                  Hover: '#ca33ff'
                 }}
               >
                 <span style={{ fontSize: '1.2rem', marginRight: '10px' }}>✧</span>
