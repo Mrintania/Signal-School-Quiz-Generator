@@ -13,6 +13,8 @@ import { generalLimiter } from './src/middlewares/rateLimiter.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { sanitizeAll } from './src/utils/validator.js';
+import dashboardRoutes from './src/routes/dashboardRoutes.js';
+
 
 // Get directory paths for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -122,7 +124,10 @@ app.use((err, req, res, next) => {
   });
 });
 
+app.use('/api/dashboard', dashboardRoutes);
+
 // Start the server
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
+

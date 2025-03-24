@@ -1,5 +1,9 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import Quiz from '../models/quiz.js';
+import { invalidateCache } from '../middlewares/cacheMiddleware.js';
+
+invalidateCache('/api/dashboard');
+
 
 // Initialize Google Gemini API with error handling
 let genAI;
@@ -55,15 +59,15 @@ class QuizController {
 
       // Request generation with timeout handling
       const generationPromise = model.generateContent(prompt);
-      
+
       // Add timeout handling
       const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => reject(new Error('AI generation timed out')), 30000); // 30 seconds timeout
       });
-      
+
       const result = await Promise.race([generationPromise, timeoutPromise]);
       const responseText = result.response.text();
-      
+
       let quizData;
       try {
         // Parse response considering different formats
@@ -80,7 +84,7 @@ class QuizController {
         }
       } catch (error) {
         console.error('Error parsing Gemini response:', error);
-        
+
         // Return more detailed error information for debugging
         return res.status(500).json({
           success: false,
@@ -120,6 +124,9 @@ class QuizController {
     try {
       const quizData = req.body;
 
+      // Get user ID from the authentication token
+      const userId = req.user.userId;
+
       // Validate required fields
       if (!quizData.title || !quizData.questions || quizData.questions.length === 0) {
         return res.status(400).json({
@@ -137,10 +144,16 @@ class QuizController {
         quizData.title = finalTitle;
       }
 
+      // Add user ID to quiz data
+      quizData.userId = userId;
+
       // Save quiz to database
       const result = await Quiz.saveQuiz(quizData);
 
       if (result.success) {
+        // Invalidate dashboard cache after saving a quiz
+        invalidateCache('/api/dashboard');
+
         return res.status(201).json({
           success: true,
           message: 'Quiz saved successfully',
@@ -163,26 +176,62 @@ class QuizController {
   // Get all quizzes
   static async getAllQuizzes(req, res) {
     try {
-      // Implement pagination
+      console.log('Fetching all quizzes - Starting');
+
+      // Get pagination parameters
       const page = parseInt(req.query.page) || 1;
-      const limit = parseInt(req.query.limit) || 10;
+      const limit = parseInt(req.query.limit) || 100;
       const offset = (page - 1) * limit;
-      
-      // Get quizzes with pagination
-      const result = await Quiz.getAllQuizzes(limit, offset);
-      
+
+      console.log(`Pagination: page=${page}, limit=${limit}, offset=${offset}`);
+
+      // Use the simplest possible query to start
+      const query = 'SELECT * FROM quizzes ORDER BY created_at DESC LIMIT ? OFFSET ?';
+      const countQuery = 'SELECT COUNT(*) as total FROM quizzes';
+
+      console.log('Executing count query');
+      // Execute count query
+      const [countRows] = await pool.execute(countQuery);
+      console.log('Count query result:', countRows);
+
+      console.log('Executing data query');
+      // Execute data query
+      const [rows] = await pool.execute(query, [limit, offset]);
+      console.log(`Data query returned ${rows.length} rows`);
+
+      const total = countRows[0].total;
+
+      // Return success response
       return res.status(200).json({
         success: true,
-        data: result.quizzes,
+        data: rows,
         pagination: {
-          total: result.total,
+          total,
           page,
           limit,
-          totalPages: Math.ceil(result.total / limit)
+          totalPages: Math.ceil(total / limit)
         }
       });
     } catch (error) {
-      return handleApiError(res, error, 'Error fetching quizzes');
+      console.error('Detailed quiz fetching error:', error);
+      console.error('Error stack:', error.stack);
+
+      // Check if it's a database-related error
+      if (error.code && (error.code.startsWith('ER_') || error.errno)) {
+        console.error('Database error details:', {
+          code: error.code,
+          errno: error.errno,
+          sqlMessage: error.sqlMessage,
+          sqlState: error.sqlState
+        });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: 'Error fetching quizzes',
+        details: error.message,
+        errorCode: error.code || 'UNKNOWN_ERROR'
+      });
     }
   }
 
@@ -442,16 +491,16 @@ class QuizController {
   static async checkTitleAvailability(req, res) {
     try {
       const { title } = req.query;
-      
+
       if (!title) {
         return res.status(400).json({
           success: false,
           message: 'Title is required'
         });
       }
-      
+
       const result = await Quiz.checkDuplicateTitle(title);
-      
+
       return res.status(200).json({
         success: true,
         data: result

@@ -3,30 +3,30 @@ import { pool } from '../config/db.js';
 class Quiz {
   // Save a new quiz to the database
   static async saveQuiz(quizData) {
-    const { title, topic, questionType, studentLevel, language, questions } = quizData;
+    const { title, topic, questionType, studentLevel, language, questions, userId } = quizData;
     const connection = await pool.getConnection();
-
+  
     try {
       // Start transaction
       await connection.beginTransaction();
-
-      // Insert quiz
+  
+      // Insert quiz with user_id
       const [quizResult] = await connection.execute(
-        'INSERT INTO quizzes (title, topic, question_type, student_level, language, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
-        [title, topic, questionType, studentLevel, language || 'english']
+        'INSERT INTO quizzes (title, topic, question_type, student_level, language, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())',
+        [title, topic, questionType, studentLevel, language || 'english', userId]
       );
-
+  
       const quizId = quizResult.insertId;
-
+  
       // Insert questions
       for (const question of questions) {
         const [questionResult] = await connection.execute(
           'INSERT INTO questions (quiz_id, question_text, explanation, created_at) VALUES (?, ?, ?, NOW())',
           [quizId, question.questionText, question.explanation]
         );
-
+  
         const questionId = questionResult.insertId;
-
+  
         // Insert options for multiple choice questions
         if (question.options && question.options.length > 0) {
           for (const option of question.options) {
@@ -37,7 +37,7 @@ class Quiz {
           }
         }
       }
-
+  
       // Commit transaction
       await connection.commit();
       return { success: true, quizId };
@@ -45,6 +45,10 @@ class Quiz {
       // Rollback on error
       await connection.rollback();
       console.error('Error saving quiz:', error);
+      console.error('Quiz data:', JSON.stringify({
+        title, topic, questionType, studentLevel, language, userId,
+        questionCount: questions?.length
+      }));
       return { success: false, error: error.message };
     } finally {
       connection.release();
