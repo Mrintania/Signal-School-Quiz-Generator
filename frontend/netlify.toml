@@ -1,0 +1,12 @@
+[build]
+  base = "frontend/"
+  publish = "build/"
+  command = "CI=false npm run build"
+
+[build.environment]
+  REACT_APP_API_URL = "https://api.signalschool.ac.th"  # แทนที่ด้วย URL ของ backend API ของคุณ
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
