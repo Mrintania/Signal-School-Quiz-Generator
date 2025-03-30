@@ -114,6 +114,23 @@ const updateUserRole = async (userId, role) => {
     }
 };
 
+// Create new user
+const createUser = async (userData) => {
+    try {
+        const response = await axios.post(`${API_URL}/admin/create-user`, 
+            userData, {
+            headers: {
+                Authorization: `Bearer ${localStorage.getItem('token')}`
+            }
+        }
+        );
+        return response.data;
+    } catch (error) {
+        console.error('Error creating user:', error);
+        throw error;
+    }
+};
+
 const adminService = {
     getDashboardStats,
     getPendingUsers,
@@ -121,7 +138,8 @@ const adminService = {
     getAllUsers,
     getAllSchools,
     updateUserStatus,
-    updateUserRole
+    updateUserRole,
+    createUser
 };
 
 export default adminService;

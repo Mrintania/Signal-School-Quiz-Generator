@@ -5,6 +5,8 @@ import quizRoutes from './src/routes/quizRoutes.js';
 import authRoutes from './src/routes/authRoutes.js';
 import userRoutes from './src/routes/userRoutes.js';
 import schoolRoutes from './src/routes/schoolRoutes.js';
+import dashboardRoutes from './src/routes/dashboardRoutes.js';
+import adminRoutes from './src/routes/adminRoutes.js';
 import { testConnection } from './src/config/db.js';
 import { logger, httpLogger } from './src/utils/logger.js';
 import applySecurityMiddleware from './src/middlewares/security.js';
@@ -12,9 +14,6 @@ import { generalLimiter } from './src/middlewares/rateLimiter.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { sanitizeAll } from './src/utils/validator.js';
-import dashboardRoutes from './src/routes/dashboardRoutes.js';
-
-
 
 // Get directory paths for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -56,11 +55,14 @@ app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 // Apply input sanitization
 app.use(sanitizeAll);
+
+// API Routes
 app.use('/api/quizzes', quizRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/schools', schoolRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/admin', adminRoutes); // Add admin routes
 
 // Test database connection
 testConnection()
@@ -74,12 +76,6 @@ testConnection()
   .catch(error => {
     logger.error('Database connection error:', error);
   });
-
-// API Routes
-app.use('/api/quizzes', quizRoutes);
-app.use('/api/auth', authRoutes); // New authentication routes
-app.use('/api/users', userRoutes); // New user management routes
-app.use('/api/schools', schoolRoutes); // New school management routes
 
 // Serve static files for profile images
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -129,10 +125,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-
-
 // Start the server
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
-
