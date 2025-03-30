@@ -21,6 +21,7 @@ import ViewQuizPage from './pages/ViewQuizPage';
 import AccountPage from './pages/AccountPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
+import AdminDashboardPage from './pages/AdminDashboardPage';
 import AdminUsersPage from './pages/AdminUsersPage';
 import UnauthorizedPage from './pages/UnauthorizedPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
@@ -61,6 +62,7 @@ const router = createBrowserRouter(
 
       {/* Admin Routes - need admin privileges */}
       <Route element={<AdminRoute />}>
+        <Route path="admin" element={<AdminDashboardPage />} />
         <Route path="admin/users" element={<AdminUsersPage />} />
         <Route path="admin/schools" element={<AdminUsersPage />} /> {/* Placeholder, can be replaced with actual SchoolsPage */}
         <Route path="admin/settings" element={<AdminUsersPage />} /> {/* Placeholder, can be replaced with actual SettingsPage */}

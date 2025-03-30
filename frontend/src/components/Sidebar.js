@@ -70,6 +70,18 @@ const Sidebar = () => {
 
   const [isHovered, setIsHovered] = useState(false);
 
+  // Admin Console 
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => {
+    const checkAdmin = () => {
+      const userRole = localStorage.getItem('userRole');
+      setIsAdmin(userRole === 'admin');
+    };
+
+    checkAdmin();
+  }, []);
+
+
   return (
     <>
       {/* Hamburger button for mobile - fixed at top left */}
@@ -272,6 +284,26 @@ const Sidebar = () => {
                 <span className="fw-medium">Account</span>
               </Link>
             </Nav.Item>
+            
+            {/* Admin Console Link */}
+            {isAdmin && (
+              <Nav.Item>
+                <Link
+                  to="/admin"
+                  className={`nav-link py-3 px-4 d-flex align-items-center ${location.pathname.startsWith('/admin') ? 'bg-light rounded-0' : 'text-secondary'}`}
+                  onClick={handleLinkClick}
+                >
+                  <span className="me-3" style={{ width: '24px', textAlign: 'center' }}>
+                    {/* Admin icon */}
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16">
+                      <path d="M8 1a7 7 0 1 0 7 7A7.007 7.007 0 0 0 8 1zm0 13a6 6 0 1 1 6-6A6.007 6.007 0 0 1 8 14z" />
+                      <path d="M8.5 4h-1v3H5v1h2.5v3h1V8H11V7H8.5V4z" />
+                    </svg>
+                  </span>
+                  <span className="fw-medium">Admin Console</span>
+                </Link>
+              </Nav.Item>
+            )}
           </Nav>
         </div>
       </div>
