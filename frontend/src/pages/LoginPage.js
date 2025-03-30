@@ -16,6 +16,7 @@ const LoginPage = () => {
     });
     const [validated, setValidated] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
+    const passwordInputRef = React.useRef(null);
 
     // Extract redirect URL from location state or query params
     const from = location.state?.from?.pathname || new URLSearchParams(location.search).get('redirect') || '/';
@@ -34,6 +35,14 @@ const LoginPage = () => {
             ...prevData,
             [name]: value
         }));
+    };
+
+    // Handle email input key press - move to password field on Tab or Enter
+    const handleEmailKeyDown = (e) => {
+        if (e.key === 'Tab' || e.key === 'Enter') {
+            e.preventDefault();
+            passwordInputRef.current.focus();
+        }
     };
 
     // Handle form submission
@@ -58,6 +67,7 @@ const LoginPage = () => {
         if (success) {
             navigate(from, { replace: true });
         }
+        // No need to reset the form on failure - email will be preserved
     };
 
     // Toggle password visibility
@@ -110,6 +120,7 @@ const LoginPage = () => {
                                         placeholder="กรอกอีเมลของคุณ"
                                         value={formData.email}
                                         onChange={handleChange}
+                                        onKeyDown={handleEmailKeyDown}
                                         required
                                         disabled={loading}
                                     />
@@ -133,6 +144,7 @@ const LoginPage = () => {
                                             onChange={handleChange}
                                             required
                                             disabled={loading}
+                                            ref={passwordInputRef}
                                         />
                                         <Button
                                             variant="outline-secondary"

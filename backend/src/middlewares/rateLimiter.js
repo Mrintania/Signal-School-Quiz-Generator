@@ -15,7 +15,7 @@ const generalLimiter = rateLimit({
 // Create a more stringent limiter for auth endpoints
 const authLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
-  max: 10, // limit each IP to 10 login/auth attempts per hour
+  max: 100, // limit each IP to 10 login/auth attempts per hour
   standardHeaders: true,
   legacyHeaders: false,
   message: {

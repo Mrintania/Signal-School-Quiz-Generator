@@ -1,7 +1,8 @@
 // src/routes/dashboardRoutes.js
 import express from 'express';
 import DashboardController from '../controllers/dashboardController.js';
-import { authenticateToken } from '../middlewares/auth.js';
+// Update the import to include authorizeRoles
+import { authenticateToken, authorizeRoles } from '../middlewares/auth.js';
 
 const router = express.Router();
 
@@ -30,7 +31,16 @@ router.use(optionalAuth);
 // Dashboard statistics
 router.get('/stats', DashboardController.getDashboardStats);
 
-// Recent quizzes for homepage
-router.get('/recent-quizzes', DashboardController.getRecentQuizzes);
+// You might need to comment this out if the method doesn't exist
+// router.get('/recent-quizzes', DashboardController.getRecentQuizzes);
+
+// Recent activities - available to all authenticated users
+router.get('/activities', DashboardController.getRecentActivities);
+
+// System status - only available to admins
+router.get('/system-status',
+    authorizeRoles('admin'),
+    DashboardController.getSystemStatus
+);
 
 export default router;

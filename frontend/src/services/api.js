@@ -1,285 +1,386 @@
 import axios from 'axios';
+import adminService from './adminService';
 
-// Use environment variable instead of hardcoded URL
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001/api';
+// Base API URL from environment variable or default to localhost
+export const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001/api';
 
-// Create custom error class
-class ApiError extends Error {
-  constructor(message, statusCode, data) {
-    super(message);
-    this.name = 'ApiError';
-    this.statusCode = statusCode;
-    this.data = data;
-  }
-}
-
-// Create axios instance with base URL
+// Create an axios instance with default config
 const api = axios.create({
   baseURL: API_URL,
   headers: {
-    'Content-Type': 'application/json',
-  },
-  timeout: 15000, // 15 second timeout
+    'Content-Type': 'application/json'
+  }
 });
 
-// Add request interceptor for authentication
+// Add a request interceptor to add the auth token to all requests
 api.interceptors.request.use(
-  (config) => {
-    // Add authentication token if available
+  config => {
     const token = localStorage.getItem('token');
     if (token) {
       config.headers['Authorization'] = `Bearer ${token}`;
     }
-
-    // Debug logging in development
-    if (process.env.NODE_ENV === 'development') {
-      console.log(`API Request: ${config.method.toUpperCase()} ${config.url}`);
-    }
     return config;
   },
-  (error) => {
+  error => {
     return Promise.reject(error);
   }
 );
 
-// Add response interceptor for error handling
-api.interceptors.response.use(
-  (response) => {
-    return response.data; // Return data directly
-  },
-  (error) => {
-    let message = 'Something went wrong';
-    let statusCode = 500;
-    let data = null;
-
-    if (error.response) {
-      // The request was made and the server responded with a status code
-      // that falls out of the range of 2xx
-      message = error.response.data.message || 'Server error';
-      statusCode = error.response.status;
-      data = error.response.data;
-      
-      // Handle authentication errors
-      if (statusCode === 401) {
-        // Clear token for authentication errors
-        localStorage.removeItem('token');
-        
-        // Redirect to login page if not already there
-        if (!window.location.pathname.includes('/login')) {
-          window.location.href = '/login?session=expired';
-        }
-      }
-    } else if (error.request) {
-      // The request was made but no response was received
-      message = 'No response from server. Please check your connection.';
-      statusCode = 0;
-    } else {
-      // Something happened in setting up the request that triggered an Error
-      message = error.message;
-    }
-
-    // Log the error in development
-    if (process.env.NODE_ENV === 'development') {
-      console.error(`API Error: ${message}`, error);
-    }
-
-    return Promise.reject(new ApiError(message, statusCode, data));
-  }
-);
-
-// Helper function to handle API requests
-const handleApiRequest = async (requestFn) => {
-  try {
-    return await requestFn(); // Return response directly (already processed by interceptor)
-  } catch (error) {
-    if (error instanceof ApiError) {
+// Quiz Service
+const quizService = {
+  // Generate a quiz based on given parameters
+  generateQuiz: async (data) => {
+    try {
+      const response = await api.post('/quizzes/generate', data);
+      return response.data;
+    } catch (error) {
+      console.error('Error generating quiz:', error);
       throw error;
     }
-    throw new ApiError(error.message, 500);
-  }
-};
-
-// Authentication API Services
-export const authService = {
-  register: async (userData) => {
-    return handleApiRequest(() => api.post('/auth/register', userData));
-  },
-  
-  login: async (email, password) => {
-    return handleApiRequest(() => api.post('/auth/login', { email, password }));
-  },
-  
-  checkAuthStatus: async () => {
-    return handleApiRequest(() => api.get('/auth/status'));
-  },
-  
-  forgotPassword: async (email) => {
-    return handleApiRequest(() => api.post('/auth/forgot-password', { email }));
-  },
-  
-  resetPassword: async (token, newPassword) => {
-    return handleApiRequest(() => api.post('/auth/reset-password', { token, newPassword }));
-  },
-  
-  verifyEmail: async (token) => {
-    return handleApiRequest(() => api.post('/auth/verify-email', { token }));
-  },
-  
-  resendVerification: async (email) => {
-    return handleApiRequest(() => api.post('/auth/resend-verification', { email }));
-  }
-};
-
-// User API Services
-export const userService = {
-  getProfile: async () => {
-    return handleApiRequest(() => api.get('/users/profile'));
-  },
-  
-  updateProfile: async (profileData) => {
-    return handleApiRequest(() => api.put('/users/profile', profileData));
-  },
-  
-  updatePassword: async (currentPassword, newPassword) => {
-    return handleApiRequest(() => api.put('/users/password', { currentPassword, newPassword }));
-  },
-  
-  updateSettings: async (settings) => {
-    return handleApiRequest(() => api.put('/users/settings', settings));
-  }
-};
-
-// Quiz API Services
-export const quizService = {
-  // Generate a new quiz using AI
-  generateQuiz: async (quizData) => {
-    return handleApiRequest(() => api.post('/quizzes/generate', quizData));
   },
 
-  // Save a generated quiz
-  saveQuiz: async (quizData) => {
-    return handleApiRequest(() => api.post('/quizzes/save', quizData));
+  // Save a quiz to the database
+  saveQuiz: async (data) => {
+    try {
+      const response = await api.post('/quizzes/save', data);
+      return response.data;
+    } catch (error) {
+      console.error('Error saving quiz:', error);
+      throw error;
+    }
   },
 
-  // Get all quizzes
-  getAllQuizzes: async () => {
-    return handleApiRequest(() => api.get('/quizzes'));
+  // Get all quizzes with optional pagination
+  getAllQuizzes: async (page = 1, limit = 10) => {
+    try {
+      const response = await api.get(`/quizzes?page=${page}&limit=${limit}`);
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching quizzes:', error);
+      throw error;
+    }
   },
 
-  // Get a quiz by ID
-  getQuizById: async (quizId) => {
-    return handleApiRequest(() => api.get(`/quizzes/${quizId}`));
+  // Get a specific quiz by ID
+  getQuizById: async (id) => {
+    try {
+      const response = await api.get(`/quizzes/${id}`);
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching quiz:', error);
+      throw error;
+    }
   },
 
   // Delete a quiz
-  deleteQuiz: async (quizId) => {
-    return handleApiRequest(() => api.delete(`/quizzes/${quizId}`));
+  deleteQuiz: async (id) => {
+    try {
+      const response = await api.delete(`/quizzes/${id}`);
+      return response.data;
+    } catch (error) {
+      console.error('Error deleting quiz:', error);
+      throw error;
+    }
   },
 
   // Rename a quiz
-  renameQuiz: async (quizId, newTitle) => {
-    return handleApiRequest(() => api.patch(`/quizzes/${quizId}/rename`, { title: newTitle }));
+  renameQuiz: async (id, title) => {
+    try {
+      const response = await api.patch(`/quizzes/${id}/rename`, { title });
+      return response.data;
+    } catch (error) {
+      console.error('Error renaming quiz:', error);
+      throw error;
+    }
   },
 
-  // Export quiz to Moodle GIFT format
-  exportQuizToMoodle: (quizId) => {
-    const downloadUrl = `${API_URL}/quizzes/${quizId}/export/moodle`;
-    window.open(downloadUrl, '_blank');
+  // Export a quiz to Moodle format
+  exportToMoodle: async (id) => {
+    try {
+      const response = await api.get(`/quizzes/${id}/export/moodle`, {
+        responseType: 'blob'
+      });
+      return response;
+    } catch (error) {
+      console.error('Error exporting quiz to Moodle:', error);
+      throw error;
+    }
   },
 
-  // Export quiz to plain text format
-  exportQuizToText: (quizId) => {
-    const downloadUrl = `${API_URL}/quizzes/${quizId}/export/text`;
-    window.open(downloadUrl, '_blank');
+  // Export a quiz to plain text format
+  exportToText: async (id) => {
+    try {
+      const response = await api.get(`/quizzes/${id}/export/text`, {
+        responseType: 'blob'
+      });
+      return response;
+    } catch (error) {
+      console.error('Error exporting quiz to text:', error);
+      throw error;
+    }
   },
 
   // Update quiz questions
-  updateQuizQuestions: async (quizId, questions) => {
-    return handleApiRequest(() => api.patch(`/quizzes/${quizId}/questions`, { questions }));
+  updateQuizQuestions: async (id, questions) => {
+    try {
+      const response = await api.patch(`/quizzes/${id}/questions`, { questions });
+      return response.data;
+    } catch (error) {
+      console.error('Error updating quiz questions:', error);
+      throw error;
+    }
   },
 
-  // Move quiz to folder
-  moveQuiz: async (quizId, folderId) => {
-    // For now, using localStorage for compatibility with existing code
+  // Move a quiz to a folder
+  moveQuiz: async (id, folderId) => {
     try {
-      const quizFolders = JSON.parse(localStorage.getItem('quizFolders') || '{}');
-      quizFolders[quizId] = folderId;
-      localStorage.setItem('quizFolders', JSON.stringify(quizFolders));
-      window.dispatchEvent(new Event('storage'));
-
-      // In a production environment, this would call the API instead
-      // return handleApiRequest(() => api.patch(`/quizzes/${quizId}/move`, { folderId }));
-
-      return { success: true, message: 'Quiz moved successfully' };
+      const response = await api.patch(`/quizzes/${id}/move`, { folderId });
+      return response.data;
     } catch (error) {
       console.error('Error moving quiz:', error);
-      throw new ApiError('Failed to move quiz', 500);
+      throw error;
+    }
+  },
+
+  // Check if a title is available
+  checkTitleAvailability: async (title) => {
+    try {
+      const response = await api.get(`/quizzes/check-title?title=${encodeURIComponent(title)}`);
+      return response.data;
+    } catch (error) {
+      console.error('Error checking title availability:', error);
+      throw error;
+    }
+  }
+};
+
+// Auth Service
+const authService = {
+  // User registration
+  register: async (userData) => {
+    try {
+      const response = await api.post('/auth/register', userData);
+      return response.data;
+    } catch (error) {
+      console.error('Error during registration:', error);
+      throw error;
+    }
+  },
+
+  // User login
+  login: async (credentials) => {
+    try {
+      const response = await api.post('/auth/login', credentials);
+      if (response.data.token) {
+        localStorage.setItem('token', response.data.token);
+      }
+      return response.data;
+    } catch (error) {
+      console.error('Error during login:', error);
+      throw error;
+    }
+  },
+
+  // Logout
+  logout: () => {
+    localStorage.removeItem('token');
+  },
+
+  // Forgot password
+  forgotPassword: async (email) => {
+    try {
+      const response = await api.post('/auth/forgot-password', { email });
+      return response.data;
+    } catch (error) {
+      console.error('Error in forgot password:', error);
+      throw error;
+    }
+  },
+
+  // Reset password
+  resetPassword: async (token, newPassword) => {
+    try {
+      const response = await api.post('/auth/reset-password', { token, newPassword });
+      return response.data;
+    } catch (error) {
+      console.error('Error resetting password:', error);
+      throw error;
+    }
+  },
+
+  // Verify user email
+  verifyEmail: async (token) => {
+    try {
+      const response = await api.post('/auth/verify-email', { token });
+      return response.data;
+    } catch (error) {
+      console.error('Error verifying email:', error);
+      throw error;
+    }
+  },
+
+  // Accept school invitation
+  acceptInvitation: async (data) => {
+    try {
+      const response = await api.post('/auth/accept-invitation', data);
+      if (response.data.token) {
+        localStorage.setItem('token', response.data.token);
+      }
+      return response.data;
+    } catch (error) {
+      console.error('Error accepting invitation:', error);
+      throw error;
+    }
+  },
+
+  // Login with Google
+  googleLogin: async (idToken) => {
+    try {
+      const response = await api.post('/auth/google', { idToken });
+      if (response.data.token) {
+        localStorage.setItem('token', response.data.token);
+      }
+      return response.data;
+    } catch (error) {
+      console.error('Error during Google login:', error);
+      throw error;
+    }
+  },
+
+  // Check if user is authenticated
+  checkAuthStatus: async () => {
+    try {
+      const response = await api.get('/auth/status');
+      return response.data;
+    } catch (error) {
+      // Don't log this error as it's expected when not authenticated
+      throw error;
+    }
+  }
+};
+
+// User Service
+const userService = {
+  // Get current user profile
+  getCurrentUser: async () => {
+    try {
+      const response = await api.get('/users/profile');
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching user profile:', error);
+      throw error;
+    }
+  },
+
+  // Update user profile
+  updateProfile: async (profileData) => {
+    try {
+      const response = await api.put('/users/profile', profileData);
+      return response.data;
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      throw error;
+    }
+  },
+
+  // Update user password
+  updatePassword: async (passwordData) => {
+    try {
+      const response = await api.put('/users/password', passwordData);
+      return response.data;
+    } catch (error) {
+      console.error('Error updating password:', error);
+      throw error;
+    }
+  },
+
+  // Upload profile image
+  uploadProfileImage: async (formData) => {
+    try {
+      const response = await api.post('/users/profile-image', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Error uploading profile image:', error);
+      throw error;
+    }
+  },
+
+  // Update user settings
+  updateSettings: async (settingsData) => {
+    try {
+      const response = await api.put('/users/settings', settingsData);
+      return response.data;
+    } catch (error) {
+      console.error('Error updating settings:', error);
+      throw error;
+    }
+  },
+
+  // Get user activity history
+  getUserActivity: async (page = 1, limit = 10) => {
+    try {
+      const response = await api.get(`/users/activity?page=${page}&limit=${limit}`);
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching user activity:', error);
+      throw error;
+    }
+  }
+};
+
+// Dashboard Service
+const dashboardService = {
+  // Get dashboard statistics
+  getStats: async () => {
+    try {
+      const response = await api.get('/dashboard/stats');
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching dashboard stats:', error);
+      throw error;
     }
   },
   
-  // Get recent quizzes and dashboard data
-  getRecentQuizzes: async (limit = 10) => {
-    return handleApiRequest(() => api.get('/dashboard/recent-quizzes', { params: { limit } }));
+  // Get recent activities
+  getRecentActivities: async () => {
+    try {
+      const response = await api.get('/dashboard/activities');
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching recent activities:', error);
+      throw error;
+    }
   },
   
-  getDashboardStats: async () => {
-    return handleApiRequest(() => api.get('/dashboard/stats'));
+  // Get system status (admin only)
+  getSystemStatus: async () => {
+    try {
+      const response = await api.get('/dashboard/system-status');
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching system status:', error);
+      throw error;
+    }
   }
 };
 
-// Generic API helper for general API calls
-export const apiService = {
-  get: async (endpoint, params) => {
-    return handleApiRequest(() => api.get(endpoint, { params }));
-  },
-  
-  post: async (endpoint, data) => {
-    return handleApiRequest(() => api.post(endpoint, data));
-  },
-  
-  put: async (endpoint, data) => {
-    return handleApiRequest(() => api.put(endpoint, data));
-  },
-  
-  patch: async (endpoint, data) => {
-    return handleApiRequest(() => api.patch(endpoint, data));
-  },
-  
-  delete: async (endpoint, data) => {
-    return handleApiRequest(() => api.delete(endpoint, { data }));
-  }
-};
-
-// Admin user verification API methods
-export const adminService = {
-  // Get users pending verification
-  getPendingUsers: async () => {
-      return handleApiRequest(() => api.get('/auth/pending-users'));
-  },
-
-  // Verify a user by ID
-  verifyUser: async (userId) => {
-      return handleApiRequest(() => api.post(`/auth/verify-user/${userId}`));
-  },
-
-  // Get all users (for admin panel)
-  getAllUsers: async (params = {}) => {
-      const { page = 1, limit = 10, search = '', status = '' } = params;
-      const queryString = new URLSearchParams({ 
-          page, 
-          limit, 
-          search, 
-          status 
-      }).toString();
-      
-      return handleApiRequest(() => api.get(`/users/admin/users?${queryString}`));
-  },
+// Export services
+export { 
+  quizService, 
+  authService, 
+  userService,
+  dashboardService,
+  adminService
 };
 
 export default {
-  auth: authService,
-  user: userService,
-  quiz: quizService,
-  api: apiService,
-  admin: adminService
+  quizService,
+  authService,
+  userService,
+  dashboardService,
+  adminService
 };
