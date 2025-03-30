@@ -22,11 +22,18 @@ const api = axios.create({
   timeout: 15000, // 15 second timeout
 });
 
-// Add request interceptor for logging
+// Add request interceptor for authentication
 api.interceptors.request.use(
   (config) => {
+    // Add authentication token if available
+    const token = localStorage.getItem('token');
+    if (token) {
+      config.headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    // Debug logging in development
     if (process.env.NODE_ENV === 'development') {
-      console.log(`Request: ${config.method.toUpperCase()} ${config.url}`);
+      console.log(`API Request: ${config.method.toUpperCase()} ${config.url}`);
     }
     return config;
   },
@@ -38,7 +45,7 @@ api.interceptors.request.use(
 // Add response interceptor for error handling
 api.interceptors.response.use(
   (response) => {
-    return response;
+    return response.data; // Return data directly
   },
   (error) => {
     let message = 'Something went wrong';
@@ -51,6 +58,17 @@ api.interceptors.response.use(
       message = error.response.data.message || 'Server error';
       statusCode = error.response.status;
       data = error.response.data;
+      
+      // Handle authentication errors
+      if (statusCode === 401) {
+        // Clear token for authentication errors
+        localStorage.removeItem('token');
+        
+        // Redirect to login page if not already there
+        if (!window.location.pathname.includes('/login')) {
+          window.location.href = '/login?session=expired';
+        }
+      }
     } else if (error.request) {
       // The request was made but no response was received
       message = 'No response from server. Please check your connection.';
@@ -72,13 +90,62 @@ api.interceptors.response.use(
 // Helper function to handle API requests
 const handleApiRequest = async (requestFn) => {
   try {
-    const response = await requestFn();
-    return response.data;
+    return await requestFn(); // Return response directly (already processed by interceptor)
   } catch (error) {
     if (error instanceof ApiError) {
       throw error;
     }
     throw new ApiError(error.message, 500);
+  }
+};
+
+// Authentication API Services
+export const authService = {
+  register: async (userData) => {
+    return handleApiRequest(() => api.post('/auth/register', userData));
+  },
+  
+  login: async (email, password) => {
+    return handleApiRequest(() => api.post('/auth/login', { email, password }));
+  },
+  
+  checkAuthStatus: async () => {
+    return handleApiRequest(() => api.get('/auth/status'));
+  },
+  
+  forgotPassword: async (email) => {
+    return handleApiRequest(() => api.post('/auth/forgot-password', { email }));
+  },
+  
+  resetPassword: async (token, newPassword) => {
+    return handleApiRequest(() => api.post('/auth/reset-password', { token, newPassword }));
+  },
+  
+  verifyEmail: async (token) => {
+    return handleApiRequest(() => api.post('/auth/verify-email', { token }));
+  },
+  
+  resendVerification: async (email) => {
+    return handleApiRequest(() => api.post('/auth/resend-verification', { email }));
+  }
+};
+
+// User API Services
+export const userService = {
+  getProfile: async () => {
+    return handleApiRequest(() => api.get('/users/profile'));
+  },
+  
+  updateProfile: async (profileData) => {
+    return handleApiRequest(() => api.put('/users/profile', profileData));
+  },
+  
+  updatePassword: async (currentPassword, newPassword) => {
+    return handleApiRequest(() => api.put('/users/password', { currentPassword, newPassword }));
+  },
+  
+  updateSettings: async (settings) => {
+    return handleApiRequest(() => api.put('/users/settings', settings));
   }
 };
 
@@ -131,11 +198,6 @@ export const quizService = {
     return handleApiRequest(() => api.patch(`/quizzes/${quizId}/questions`, { questions }));
   },
 
-  // Check title availability
-  checkTitleAvailability: async (title) => {
-    return handleApiRequest(() => api.get('/quizzes/check-title', { params: { title } }));
-  },
-
   // Move quiz to folder
   moveQuiz: async (quizId, folderId) => {
     // For now, using localStorage for compatibility with existing code
@@ -154,61 +216,70 @@ export const quizService = {
       throw new ApiError('Failed to move quiz', 500);
     }
   },
-
+  
+  // Get recent quizzes and dashboard data
   getRecentQuizzes: async (limit = 10) => {
     return handleApiRequest(() => api.get('/dashboard/recent-quizzes', { params: { limit } }));
   },
+  
+  getDashboardStats: async () => {
+    return handleApiRequest(() => api.get('/dashboard/stats'));
+  }
+};
 
-  getAllStats: async () => {
-    try {
-      // เรียกใช้ getAllQuizzes เพื่อนับจำนวนข้อสอบทั้งหมด
-      const quizResponse = await handleApiRequest(() => api.get('/quizzes'));
+// Generic API helper for general API calls
+export const apiService = {
+  get: async (endpoint, params) => {
+    return handleApiRequest(() => api.get(endpoint, { params }));
+  },
+  
+  post: async (endpoint, data) => {
+    return handleApiRequest(() => api.post(endpoint, data));
+  },
+  
+  put: async (endpoint, data) => {
+    return handleApiRequest(() => api.put(endpoint, data));
+  },
+  
+  patch: async (endpoint, data) => {
+    return handleApiRequest(() => api.patch(endpoint, data));
+  },
+  
+  delete: async (endpoint, data) => {
+    return handleApiRequest(() => api.delete(endpoint, { data }));
+  }
+};
 
-      if (quizResponse.success) {
-        const quizCount = quizResponse.data.length;
+// Admin user verification API methods
+export const adminService = {
+  // Get users pending verification
+  getPendingUsers: async () => {
+      return handleApiRequest(() => api.get('/auth/pending-users'));
+  },
 
-        // จำลองข้อมูลสำหรับส่วนที่ยังไม่มี
-        return {
-          success: true,
-          data: {
-            quizCount,
-            lessonPlanCount: 0,
-            teachingResourcesCount: 0,
-            slideDeckCount: 0,
-            flashcardSetCount: 0,
-            customChatbotCount: 0
-          }
-        };
-      }
+  // Verify a user by ID
+  verifyUser: async (userId) => {
+      return handleApiRequest(() => api.post(`/auth/verify-user/${userId}`));
+  },
 
-      return {
-        success: false,
-        message: 'Failed to fetch stats',
-        data: {
-          quizCount: 0,
-          lessonPlanCount: 0,
-          teachingResourcesCount: 0,
-          slideDeckCount: 0,
-          flashcardSetCount: 0,
-          customChatbotCount: 0
-        }
-      };
-    } catch (error) {
-      console.error('Error in getAllStats:', error);
-      return {
-        success: false,
-        message: error.message,
-        data: {
-          quizCount: 0,
-          lessonPlanCount: 0,
-          teachingResourcesCount: 0,
-          slideDeckCount: 0,
-          flashcardSetCount: 0,
-          customChatbotCount: 0
-        }
-      };
-    }
+  // Get all users (for admin panel)
+  getAllUsers: async (params = {}) => {
+      const { page = 1, limit = 10, search = '', status = '' } = params;
+      const queryString = new URLSearchParams({ 
+          page, 
+          limit, 
+          search, 
+          status 
+      }).toString();
+      
+      return handleApiRequest(() => api.get(`/users/admin/users?${queryString}`));
   },
 };
 
-export default api;
+export default {
+  auth: authService,
+  user: userService,
+  quiz: quizService,
+  api: apiService,
+  admin: adminService
+};

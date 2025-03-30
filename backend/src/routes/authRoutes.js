@@ -2,7 +2,7 @@
 import express from 'express';
 import AuthController from '../controllers/authController.js';
 import { authLimiter } from '../middlewares/rateLimiter.js';
-import { authenticateToken } from '../middlewares/auth.js';
+import { authenticateToken, authorizeRoles } from '../middlewares/auth.js';
 import { validate, commonRules } from '../utils/validator.js';
 
 const router = express.Router();
@@ -16,22 +16,6 @@ router.post(
     commonRules.authRules.register,
     validate,
     AuthController.register
-);
-
-// Email verification route
-router.post(
-    '/verify-email',
-    commonRules.authRules.verifyEmail,
-    validate,
-    AuthController.verifyEmail
-);
-
-// Resend verification email route
-router.post(
-    '/resend-verification',
-    commonRules.authRules.resendVerification,
-    validate,
-    AuthController.resendVerification
 );
 
 // Login route
@@ -72,6 +56,22 @@ router.post(
     commonRules.authRules.googleAuth,
     validate,
     AuthController.googleAuth
+);
+
+// New route: Admin verification of user accounts
+router.post(
+    '/verify-user/:userId',
+    authenticateToken,
+    authorizeRoles('admin', 'school_admin'),
+    AuthController.verifyUser
+);
+
+// Get pending users route (for admin panel)
+router.get(
+    '/pending-users',
+    authenticateToken,
+    authorizeRoles('admin', 'school_admin'),
+    AuthController.getPendingUsers
 );
 
 // Check authentication status

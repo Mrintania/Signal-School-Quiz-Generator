@@ -1,4 +1,3 @@
-// backend/src/routes/userRoutes.js
 import express from 'express';
 import { authenticateToken, authorizeRoles } from '../middlewares/auth.js';
 import { validate, commonRules } from '../utils/validator.js';

@@ -49,7 +49,7 @@ const authenticateToken = async (req, res, next) => {
     if (users[0].status !== 'active') {
       return res.status(401).json({
         success: false,
-        message: 'Your account is not active. Please contact an administrator.'
+        message: 'Your account is not active. Please contact an administrator for account verification.'
       });
     }
     

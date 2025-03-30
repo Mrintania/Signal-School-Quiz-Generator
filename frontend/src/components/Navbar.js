@@ -2,12 +2,17 @@ import React, { useState, useEffect } from 'react';
 import { Navbar, Container, Dropdown } from 'react-bootstrap';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import { quizService } from '../services/api';
+import { useAuth } from '../context/AuthContext';
+import { useNavigate } from 'react-router-dom';
+
 
 const NavbarComponent = () => {
   const location = useLocation();
   const params = useParams();
   const [quizTitle, setQuizTitle] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const navigate = useNavigate(); // เพิ่ม useNavigate สำหรับการ redirect
+  const { logout } = useAuth(); // เพิ่ม logout function จาก AuthContext
   
   // Create state variable for user (same as original)
   const [user, setUser] = useState({
@@ -48,6 +53,11 @@ const NavbarComponent = () => {
     
     fetchQuizTitle();
   }, [location.pathname]);
+
+  const handleLogout = () => {
+    logout(); // เรียกใช้ logout function จาก AuthContext
+    navigate('/login'); // นำทางไปที่หน้า login
+  };
 
   return (
     <Navbar 
@@ -235,19 +245,13 @@ const NavbarComponent = () => {
                     {user.profile.initial}
                   </div>
                 )}
-                
-                <span className="ms-2 d-none d-lg-inline">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                    <path fillRule="evenodd" d="M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708z"/>
-                  </svg>
-                </span>
               </Dropdown.Toggle>
 
               <Dropdown.Menu>
                 <Dropdown.Item as={Link} to="/account">บัญชีของฉัน</Dropdown.Item>
                 <Dropdown.Item as={Link} to="/settings">ตั้งค่า</Dropdown.Item>
                 <Dropdown.Divider />
-                <Dropdown.Item>ออกจากระบบ</Dropdown.Item>
+                <Dropdown.Item onClick={handleLogout}>ออกจากระบบ</Dropdown.Item>
               </Dropdown.Menu>
             </Dropdown>
           ) : (

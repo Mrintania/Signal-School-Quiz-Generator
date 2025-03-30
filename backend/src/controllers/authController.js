@@ -47,22 +47,17 @@ class AuthController {
             const saltRounds = 10;
             const passwordHash = await bcrypt.hash(password, saltRounds);
 
-            // Generate email verification token
-            const verificationToken = crypto.randomBytes(32).toString('hex');
-            const tokenExpires = new Date();
-            tokenExpires.setHours(tokenExpires.getHours() + 24); // Token valid for 24 hours
-
             const connection = await pool.getConnection();
 
             try {
                 await connection.beginTransaction();
 
-                // Insert new user
+                // Insert new user with pending status (awaiting admin verification)
                 const [userResult] = await connection.execute(
                     `INSERT INTO users 
-           (first_name, last_name, email, password_hash, email_verification_token, email_token_expires_at, status) 
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                    [firstName, lastName, email, passwordHash, verificationToken, tokenExpires, 'pending']
+                    (first_name, last_name, email, password_hash, status, role) 
+                    VALUES (?, ?, ?, ?, ?, ?)`,
+                    [firstName, lastName, email, passwordHash, 'pending', 'teacher']
                 );
 
                 const userId = userResult.insertId;
@@ -100,12 +95,6 @@ class AuthController {
                         );
 
                         schoolId = schoolResult.insertId;
-
-                        // Set user as school admin for new school
-                        await connection.execute(
-                            'UPDATE users SET role = ? WHERE id = ?',
-                            ['school_admin', userId]
-                        );
                     }
 
                     // Associate user with school
@@ -117,27 +106,16 @@ class AuthController {
 
                 await connection.commit();
 
-                // Send verification email
-                const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
-                await sendEmail({
-                    to: email,
-                    subject: 'Verify Your Signal School Quiz Generator Account',
-                    html: `
-            <h2>Welcome to Signal School Quiz Generator!</h2>
-            <p>Hello ${firstName},</p>
-            <p>Thank you for signing up. Please verify your email address by clicking the link below:</p>
-            <p><a href="${verificationLink}">Verify Email Address</a></p>
-            <p>This link will expire in 24 hours.</p>
-            <p>If you did not create this account, please ignore this email.</p>
-          `
-                });
+                // Notify admin about new user registration (optional)
+                // Send notification to admin email or create admin notification in the database
+                await notifyAdminAboutNewUser(userId, email, firstName, lastName);
 
                 // Log user registration
-                logger.info(`New user registered: ${email} (ID: ${userId})`);
+                logger.info(`New user registered (awaiting admin verification): ${email} (ID: ${userId})`);
 
                 return res.status(201).json({
                     success: true,
-                    message: 'Registration successful! Please check your email to verify your account.'
+                    message: 'Registration successful! Your account is pending administrator approval. You will be notified once your account is verified.'
                 });
             } catch (error) {
                 await connection.rollback();
@@ -294,6 +272,52 @@ class AuthController {
         }
     }
 
+    // Get users pending admin verification
+    static async getPendingUsers(req, res) {
+        try {
+            const adminId = req.user.userId; // From JWT token
+
+            // Check if requester is an admin
+            const [admins] = await pool.execute(
+                'SELECT role FROM users WHERE id = ?',
+                [adminId]
+            );
+
+            if (admins.length === 0 || (admins[0].role !== 'admin' && admins[0].role !== 'school_admin')) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Only administrators can view pending user accounts'
+                });
+            }
+
+            // Get all pending users
+            const [pendingUsers] = await pool.execute(
+                `SELECT u.id, u.first_name as firstName, u.last_name as lastName, 
+            u.email, u.role, u.created_at as createdAt, 
+            s.name as schoolName
+            FROM users u
+            LEFT JOIN user_schools us ON u.id = us.user_id
+            LEFT JOIN schools s ON us.school_id = s.id
+            WHERE u.status = ?
+            ORDER BY u.created_at DESC`,
+                ['pending']
+            );
+
+            return res.status(200).json({
+                success: true,
+                users: pendingUsers
+            });
+        } catch (error) {
+            logger.error('Error fetching pending users:', error);
+
+            return res.status(500).json({
+                success: false,
+                message: 'An error occurred while fetching pending user accounts',
+                error: process.env.NODE_ENV === 'development' ? error.message : undefined
+            });
+        }
+    }
+
     // User Login
     static async login(req, res) {
         try {
@@ -315,7 +339,7 @@ class AuthController {
 
             // Find user by email
             const [users] = await pool.execute(
-                'SELECT id, first_name, last_name, email, password_hash, role, status, email_verified FROM users WHERE email = ?',
+                'SELECT id, first_name, last_name, email, password_hash, role, status FROM users WHERE email = ?',
                 [email]
             );
 
@@ -334,12 +358,12 @@ class AuthController {
 
             const user = users[0];
 
-            // Check if user's email is verified
-            if (!user.email_verified) {
+            // Check if account is pending admin verification
+            if (user.status === 'pending') {
                 return res.status(401).json({
                     success: false,
-                    message: 'Please verify your email before logging in',
-                    requiresVerification: true
+                    message: 'Your account is pending administrator approval. You will be notified once your account is verified.',
+                    requiresAdminVerification: true
                 });
             }
 
@@ -387,9 +411,9 @@ class AuthController {
             // Get user schools/organizations
             const [schools] = await pool.execute(
                 `SELECT s.id, s.name, us.position, us.department 
-         FROM schools s
-         INNER JOIN user_schools us ON s.id = us.school_id
-         WHERE us.user_id = ?`,
+                FROM schools s
+                INNER JOIN user_schools us ON s.id = us.school_id
+                WHERE us.user_id = ?`,
                 [user.id]
             );
 
@@ -580,6 +604,82 @@ class AuthController {
             return res.status(500).json({
                 success: false,
                 message: 'An error occurred while resetting your password',
+                error: process.env.NODE_ENV === 'development' ? error.message : undefined
+            });
+        }
+    }
+
+    // New function for admin to verify users
+    static async verifyUser(req, res) {
+        try {
+            const adminId = req.user.userId; // From JWT token
+            const { userId } = req.params;
+
+            // Check if requester is an admin
+            const [admins] = await pool.execute(
+                'SELECT role FROM users WHERE id = ?',
+                [adminId]
+            );
+
+            if (admins.length === 0 || (admins[0].role !== 'admin' && admins[0].role !== 'school_admin')) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Only administrators can verify user accounts'
+                });
+            }
+
+            // Find user to verify
+            const [users] = await pool.execute(
+                'SELECT id, email, status, first_name, last_name FROM users WHERE id = ?',
+                [userId]
+            );
+
+            if (users.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'User not found'
+                });
+            }
+
+            const user = users[0];
+
+            // Check if user is already verified
+            if (user.status === 'active') {
+                return res.status(400).json({
+                    success: false,
+                    message: 'This user account is already active'
+                });
+            }
+
+            // Update user status to active
+            await pool.execute(
+                'UPDATE users SET status = ?, email_verified = TRUE, updated_at = NOW() WHERE id = ?',
+                ['active', userId]
+            );
+
+            // Log the verification
+            logger.info(`User verified by admin: ${user.email} (ID: ${userId}) - Verified by admin ID: ${adminId}`);
+
+            // Record verification activity
+            await pool.execute(
+                'INSERT INTO user_activities (user_id, activity_type, description) VALUES (?, ?, ?)',
+                [userId, 'account_verified', `Account verified by administrator (ID: ${adminId})`]
+            );
+
+            // Notify user about verification (optional)
+            // Send email to user that their account is now verified
+            await sendAccountVerificationEmail(user.email, user.first_name);
+
+            return res.status(200).json({
+                success: true,
+                message: `User account for ${user.email} has been successfully verified`
+            });
+        } catch (error) {
+            logger.error('User verification error:', error);
+
+            return res.status(500).json({
+                success: false,
+                message: 'An error occurred while verifying the user account',
                 error: process.env.NODE_ENV === 'development' ? error.message : undefined
             });
         }
@@ -921,6 +1021,67 @@ class AuthController {
                 error: process.env.NODE_ENV === 'development' ? error.message : undefined
             });
         }
+    }
+}
+// Helper function to notify admin about new user registration
+async function notifyAdminAboutNewUser(userId, email, firstName, lastName) {
+    try {
+        // Get admin emails
+        const [admins] = await pool.execute(
+            'SELECT email FROM users WHERE role = ? OR role = ?',
+            ['admin', 'school_admin']
+        );
+
+        if (admins.length === 0) {
+            logger.warn('No administrators found to notify about new user registration');
+            return;
+        }
+
+        // Get admin emails
+        const adminEmails = admins.map(admin => admin.email);
+
+        // Send notification email to admins
+        await sendEmail({
+            to: adminEmails.join(','),
+            subject: 'New User Registration Requires Verification',
+            html: `
+                <h2>New User Registration</h2>
+                <p>A new user has registered and requires verification:</p>
+                <ul>
+                    <li><strong>User ID:</strong> ${userId}</li>
+                    <li><strong>Email:</strong> ${email}</li>
+                    <li><strong>Name:</strong> ${firstName} ${lastName}</li>
+                </ul>
+                <p>Please log in to the admin panel to verify this user.</p>
+                <a href="${process.env.FRONTEND_URL}/admin/users" style="display: inline-block; padding: 10px 20px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px;">Go to Admin Panel</a>
+            `
+        });
+
+        logger.info(`Admin notification sent for new user registration: ${email} (ID: ${userId})`);
+    } catch (error) {
+        logger.error('Error sending admin notification:', error);
+    }
+}
+
+// Helper function to send verification email to user
+async function sendAccountVerificationEmail(email, firstName) {
+    try {
+        await sendEmail({
+            to: email,
+            subject: 'Your Account Has Been Verified',
+            html: `
+                <h2>Welcome to Signal School Quiz Generator!</h2>
+                <p>Hello ${firstName},</p>
+                <p>We're pleased to inform you that your account has been verified by an administrator and is now active.</p>
+                <p>You can now log in and start using our platform.</p>
+                <a href="${process.env.FRONTEND_URL}/login" style="display: inline-block; padding: 10px 20px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px;">Login to Your Account</a>
+                <p>If you have any questions or need assistance, please contact our support team.</p>
+            `
+        });
+
+        logger.info(`Account verification email sent to: ${email}`);
+    } catch (error) {
+        logger.error('Error sending account verification email:', error);
     }
 }
 
