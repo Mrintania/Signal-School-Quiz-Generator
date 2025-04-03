@@ -3,7 +3,7 @@
   "module": "index.js",
   "type": "module",
   "devDependencies": {
-    "@types/bun": "latest",
+    "@types/bun": "^1.2.8",
     "nodemon": "^3.0.1"
   },
   "peerDependencies": {

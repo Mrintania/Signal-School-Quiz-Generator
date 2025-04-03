@@ -1,131 +1,83 @@
-import express from 'express';
-import cors from 'cors';
-import dotenv from 'dotenv';
-import quizRoutes from './src/routes/quizRoutes.js';
-import authRoutes from './src/routes/authRoutes.js';
-import userRoutes from './src/routes/userRoutes.js';
-import schoolRoutes from './src/routes/schoolRoutes.js';
-import dashboardRoutes from './src/routes/dashboardRoutes.js';
-import adminRoutes from './src/routes/adminRoutes.js';
-import { testConnection } from './src/config/db.js';
-import { logger, httpLogger } from './src/utils/logger.js';
-import applySecurityMiddleware from './src/middlewares/security.js';
-import { generalLimiter } from './src/middlewares/rateLimiter.js';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { sanitizeAll } from './src/utils/validator.js';
+// backend/index.js
+import { logger } from './src/utils/logger.js';
+import AppInitService from './src/services/appInitService.js';
+import configService from './src/services/configService.js';
 
-// Get directory paths for ES modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+/**
+ * Main application entry point
+ */
+async function main() {
+  try {
+    logger.info('Starting Signal School Quiz Generator backend');
 
-// Load environment variables
-dotenv.config();
+    // Initialize the Express app
+    const app = await AppInitService.initializeApp();
 
-// Initialize Express app
-const app = express();
-const PORT = process.env.PORT || 3001;
+    // Start the server
+    const PORT = configService.get('server.port');
+    const server = app.listen(PORT, () => {
+      logger.info(`Server is running on port ${PORT}`);
+      logger.info(`Environment: ${configService.get('server.environment')}`);
+      logger.info(`API URL: http://localhost:${PORT}/api`);
+    });
 
-// Create logs directory if it doesn't exist
-import fs from 'fs';
-if (!fs.existsSync('logs')) {
-  fs.mkdirSync('logs');
+    // Log successful startup
+    logger.info('Application started successfully');
+
+    // Handle server errors
+    server.on('error', (error) => {
+      logger.error('Server error:', error);
+
+      if (error.code === 'EADDRINUSE') {
+        logger.error(`Port ${PORT} is already in use. Please use a different port.`);
+        process.exit(1);
+      }
+    });
+
+    // Graceful shutdown handler
+    const gracefulShutdown = () => {
+      logger.info('Starting graceful shutdown...');
+
+      server.close(() => {
+        logger.info('HTTP server closed');
+        logger.info('Graceful shutdown completed');
+        process.exit(0);
+      });
+
+      // Force exit after 10 seconds if graceful shutdown fails
+      setTimeout(() => {
+        logger.error('Graceful shutdown timeout, forcing exit');
+        process.exit(1);
+      }, 10000);
+    };
+
+    // Listen for termination signals
+    process.on('SIGTERM', gracefulShutdown);
+    process.on('SIGINT', gracefulShutdown);
+
+    return { app, server };
+  } catch (error) {
+    logger.error('Failed to start application:', error);
+    process.exit(1);
+  }
 }
 
-// Create uploads directory if it doesn't exist
-if (!fs.existsSync('uploads')) {
-  fs.mkdirSync('uploads');
-}
-if (!fs.existsSync('uploads/profile-images')) {
-  fs.mkdirSync('uploads/profile-images');
-}
-
-// Apply security middleware
-applySecurityMiddleware(app);
-
-// Apply HTTP request logging
-app.use(httpLogger);
-
-// Apply general rate limiter
-app.use(generalLimiter);
-
-// Body parsing middleware
-app.use(express.json({ limit: '1mb' }));
-app.use(express.urlencoded({ extended: true, limit: '1mb' }));
-
-// Apply input sanitization
-app.use(sanitizeAll);
-
-// API Routes
-app.use('/api/quizzes', quizRoutes);
-app.use('/api/auth', authRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/schools', schoolRoutes);
-app.use('/api/dashboard', dashboardRoutes);
-app.use('/api/admin', adminRoutes); // Add admin routes
-
-// Test database connection
-testConnection()
-  .then(success => {
-    if (success) {
-      logger.info('Database connection established successfully');
-    } else {
-      logger.error('Database connection failed');
-    }
-  })
+// Execute main function
+main()
   .catch(error => {
-    logger.error('Database connection error:', error);
+    logger.error('Unhandled error in main:', error);
+    process.exit(1);
   });
 
-// Serve static files for profile images
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
-// Home route
-app.get('/api', (req, res) => {
-  res.json({ 
-    message: 'Welcome to Quiz Generator API',
-    version: process.env.API_VERSION || '1.0.0',
-    status: 'Running'
-  });
+// Handle unexpected errors
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught Exception:', error);
+  // Give time to log the error before exiting
+  setTimeout(() => {
+    process.exit(1);
+  }, 1000);
 });
 
-// Serve static files in production
-if (process.env.NODE_ENV === 'production') {
-  // Set static folder
-  app.use(express.static(path.join(__dirname, '../frontend/build')));
-  
-  // Any route not matched by API routes will serve the React app
-  app.get('*', (req, res) => {
-    res.sendFile(path.resolve(__dirname, '../frontend/build', 'index.html'));
-  });
-}
-
-// 404 handler for API routes
-app.use('/api/*', (req, res) => {
-  logger.warn(`Route not found: ${req.originalUrl}`);
-  res.status(404).json({
-    success: false,
-    message: 'API endpoint not found'
-  });
-});
-
-// Global error handler
-app.use((err, req, res, next) => {
-  logger.error(`Global error handler: ${err.message}`, { 
-    url: req.originalUrl,
-    method: req.method,
-    stack: err.stack
-  });
-  
-  const statusCode = err.statusCode || 500;
-  
-  res.status(statusCode).json({
-    success: false,
-    message: process.env.NODE_ENV === 'production' ? 'Server error' : err.message
-  });
-});
-
-// Start the server
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled Rejection:', reason);
 });
