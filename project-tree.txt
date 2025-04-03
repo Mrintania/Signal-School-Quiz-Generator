@@ -1,9 +1,9 @@
-tree -I 'node_modules'
+❯ tree -I 'node_modules'
 .
 ├── backend
 │   ├── bun.lockb
 │   ├── db
-│   ├── index.js
+│   ├── index.ts
 │   ├── logs
 │   │   ├── combined.log
 │   │   └── error.log
@@ -12,7 +12,7 @@ tree -I 'node_modules'
 │   ├── README.md
 │   ├── src
 │   │   ├── config
-│   │   │   └── db.js
+│   │   │   └── db.ts
 │   │   ├── controllers
 │   │   │   ├── adminController.js
 │   │   │   ├── authController.js
@@ -22,10 +22,11 @@ tree -I 'node_modules'
 │   │   │   ├── schoolAdminController.js
 │   │   │   ├── schoolController.js
 │   │   │   └── userController.js
+│   │   ├── index.ts
 │   │   ├── middlewares
-│   │   │   ├── auth.js
+│   │   │   ├── auth.ts
 │   │   │   ├── cacheMiddleware.js
-│   │   │   ├── rateLimiter.js
+│   │   │   ├── rateLimiter.ts
 │   │   │   └── security.js
 │   │   ├── models
 │   │   │   └── quiz.js
@@ -38,20 +39,22 @@ tree -I 'node_modules'
 │   │   │   └── userRoutes.js
 │   │   ├── services
 │   │   │   ├── aiService.js
-│   │   │   ├── appInitService.js
+│   │   │   ├── appInitService.ts
 │   │   │   ├── authService.js
-│   │   │   ├── cacheService.js
-│   │   │   ├── configService.js
+│   │   │   ├── cacheService.ts
+│   │   │   ├── configService.ts
 │   │   │   ├── dbService.js
-│   │   │   ├── errorService.js
+│   │   │   ├── errorService.ts
 │   │   │   ├── exportService.js
-│   │   │   ├── middlewareService.js
+│   │   │   ├── middlewareService.ts
 │   │   │   └── quizService.js
+│   │   ├── types
+│   │   │   └── index.ts
 │   │   └── utils
 │   │       ├── create-admin.js
-│   │       ├── emailService.js
-│   │       ├── logger.js
-│   │       └── validator.js
+│   │       ├── emailService.ts
+│   │       ├── logger.ts
+│   │       └── validator.ts
 │   ├── tsconfig.json
 │   └── uploads
 │       └── profile-images
@@ -164,8 +167,9 @@ tree -I 'node_modules'
 │           ├── globalErrorHandler.js
 │           └── ideas.js
 ├── logs
+├── project-tree.txt
 ├── README.md
 └── uploads
     └── profile-images
 
-32 directories, 136 files
+33 directories, 139 files

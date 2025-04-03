@@ -1,4 +1,3 @@
-// backend/src/routes/schoolRoutes.js
 import express from 'express';
 import SchoolController from '../controllers/schoolController.js';
 import { authenticateToken, authorizeRoles } from '../middlewares/auth.js';

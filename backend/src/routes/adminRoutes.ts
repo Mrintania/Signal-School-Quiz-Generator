@@ -1,7 +1,8 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import { AdminController } from '../controllers/adminController.js';
 import { authenticateToken, authorizeRoles } from '../middlewares/auth.js';
 import { validate, commonRules } from '../utils/validator.js';
+import { AuthRequest } from '../types/index.js';
 
 const router = express.Router();
 

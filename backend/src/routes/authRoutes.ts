@@ -1,23 +1,26 @@
-// backend/src/routes/authRoutes.js
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
+import { param } from 'express-validator';
 import AuthController from '../controllers/authController.js';
 import { authLimiter } from '../middlewares/rateLimiter.js';
 import { authenticateToken, authorizeRoles } from '../middlewares/auth.js';
 import { validate, commonRules } from '../utils/validator.js';
-
-// Log available methods for debugging
-console.log('Available methods in AuthController:', Object.keys(AuthController));
+import { AuthRequest } from '../types/index.js';
 
 const router = express.Router();
 
-// Apply rate limiter for auth routes to prevent brute force attempts
+// Apply rate limiter
 router.use(authLimiter);
 
-// Create a helper function to safely use controller methods
-function safeController(method, fallback) {
-    return (req, res, next) => {
-        if (typeof AuthController[method] === 'function') {
-            return AuthController[method](req, res, next);
+// Safely execute controller methods
+function safeController(
+    method: string, 
+    fallback: (req: Request, res: Response) => void
+) {
+    return (req: Request, res: Response, next: NextFunction) => {
+        const controllerMethod = (AuthController as any)[method];
+        
+        if (typeof controllerMethod === 'function') {
+            return controllerMethod(req, res, next);
         } else {
             console.warn(`Warning: AuthController.${method} is not defined, using fallback`);
             return fallback(req, res);
@@ -26,7 +29,7 @@ function safeController(method, fallback) {
 }
 
 // Fallback handler
-const notImplemented = (req, res) => {
+const notImplemented = (req: Request, res: Response) => {
     return res.status(200).json({
         success: true,
         message: 'This feature is not implemented yet'
@@ -37,7 +40,7 @@ const notImplemented = (req, res) => {
 router.post('/register', safeController('register', notImplemented));
 router.post('/login', safeController('login', notImplemented));
 
-// Additional routes with safe controller usage
+// Detailed routes with validation
 router.post(
     '/forgot-password',
     commonRules.authRules.forgotPassword,
@@ -60,56 +63,39 @@ router.post(
 );
 
 router.post(
-    '/resend-verification',
-    commonRules.authRules.resendVerification,
-    validate,
-    safeController('resendVerification', notImplemented)
-);
-
-router.post(
     '/accept-invitation',
     commonRules.authRules.acceptInvitation,
     validate,
     safeController('acceptInvitation', notImplemented)
 );
 
-router.post(
-    '/google',
-    commonRules.authRules.googleAuth,
-    validate,
-    safeController('googleAuth', notImplemented)
-);
-
-// Admin routes
+// Verify user route with explicit parameter validation
 router.post(
     '/verify-user/:userId',
+    param('userId')
+        .isInt()
+        .withMessage('User ID must be a valid integer'),
+    validate,
     authenticateToken,
     authorizeRoles('admin', 'school_admin'),
     safeController('verifyUser', notImplemented)
 );
 
-router.get(
-    '/pending-users',
-    authenticateToken,
-    authorizeRoles('admin', 'school_admin'),
-    safeController('getPendingUsers', notImplemented)
-);
-
-// Check authentication status
-router.get('/status', authenticateToken, (req, res) => {
+// Authentication status route
+router.get('/status', authenticateToken, (req: AuthRequest, res: Response) => {
     return res.status(200).json({
         success: true,
         message: 'Authenticated',
         user: {
-            id: req.user.userId,
-            email: req.user.email,
-            role: req.user.role
+            id: req.user?.userId,
+            email: req.user?.email,
+            role: req.user?.role
         }
     });
 });
 
 // Test route
-router.get('/test', (req, res) => {
+router.get('/test', (req: Request, res: Response) => {
     res.status(200).json({
         success: true,
         message: 'Auth routes are working'

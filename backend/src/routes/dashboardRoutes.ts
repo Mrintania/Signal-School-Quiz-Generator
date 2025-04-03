@@ -1,17 +1,20 @@
-// src/routes/dashboardRoutes.js
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import DashboardController from '../controllers/dashboardController.js';
-// Update the import to include authorizeRoles
 import { authenticateToken, authorizeRoles } from '../middlewares/auth.js';
+import { AuthRequest } from '../types/index.js';
 
 const router = express.Router();
 
 // Apply authentication middleware conditionally
-const optionalAuth = (req, res, next) => {
+const optionalAuth = (req: Request, res: Response, next: NextFunction): void => {
     // Skip auth check if SKIP_AUTH is true
     if (process.env.NODE_ENV === 'development' && process.env.SKIP_AUTH === 'true') {
         // Set a default user in development mode
-        req.user = { userId: 1, email: 'admin@example.com', role: 'admin' };
+        (req as AuthRequest).user = { 
+            userId: 1, 
+            email: 'admin@example.com', 
+            role: 'admin' 
+        };
         return next();
     }
 
@@ -30,9 +33,6 @@ router.use(optionalAuth);
 
 // Dashboard statistics
 router.get('/stats', DashboardController.getDashboardStats);
-
-// You might need to comment this out if the method doesn't exist
-// router.get('/recent-quizzes', DashboardController.getRecentQuizzes);
 
 // Recent activities - available to all authenticated users
 router.get('/activities', DashboardController.getRecentActivities);

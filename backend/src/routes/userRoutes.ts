@@ -1,14 +1,19 @@
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import { authenticateToken, authorizeRoles } from '../middlewares/auth.js';
 import { validate, commonRules } from '../utils/validator.js';
 import { generalLimiter } from '../middlewares/rateLimiter.js';
 import { UserController } from '../controllers/userController.js';
 import { SchoolAdminController } from '../controllers/schoolAdminController.js';
 import { AdminController } from '../controllers/adminController.js';
-import multer from 'multer';
+import multer, {
+    FileFilterCallback,
+    StorageEngine,
+    MulterError
+} from 'multer';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import { AuthRequest } from '../types/index.js';
 
 // Get current directory
 const __filename = fileURLToPath(import.meta.url);
@@ -21,23 +26,27 @@ if (!fs.existsSync(uploadDir)) {
 }
 
 // Configure multer for file uploads
-const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
+const storage: StorageEngine = multer.diskStorage({
+    destination: function (req: AuthRequest, file, cb) {
         cb(null, uploadDir);
     },
-    filename: function (req, file, cb) {
+    filename: function (req: AuthRequest, file, cb) {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        const fileExtension = file.originalname.split('.').pop();
-        cb(null, 'profile-' + req.user.userId + '-' + uniqueSuffix + '.' + fileExtension);
+        const fileExtension = file.originalname.split('.').pop() || 'jpg';
+        cb(null, `profile-${req.user?.userId}-${uniqueSuffix}.${fileExtension}`);
     }
 });
 
-const fileFilter = (req, file, cb) => {
+const fileFilter = (
+    req: Request,
+    file: Express.Multer.File,
+    cb: FileFilterCallback
+) => {
     // Accept only image files
     if (file.mimetype.startsWith('image/')) {
         cb(null, true);
     } else {
-        cb(new Error('Only image files are allowed!'), false);
+        cb(new Error('Only image files are allowed!'));
     }
 };
 
@@ -171,7 +180,7 @@ router.put(
 // School department management routes
 router.get(
     '/school/:schoolId/departments',
-    SchoolAdminController.getSchoolDepartments  // ตรวจสอบให้แน่ใจว่ามีเมธอดนี้ในไฟล์ schoolAdminController.js
+    SchoolAdminController.getSchoolDepartments
 );
 
 router.post(
@@ -197,8 +206,13 @@ router.delete(
 );
 
 // Error handler for multer
-router.use((err, req, res, next) => {
-    if (err instanceof multer.MulterError) {
+router.use((
+    err: Error,
+    req: Request,
+    res: Response,
+    next: NextFunction
+) => {
+    if (err instanceof MulterError) {
         if (err.code === 'LIMIT_FILE_SIZE') {
             return res.status(400).json({
                 success: false,
@@ -215,7 +229,7 @@ router.use((err, req, res, next) => {
             message: err.message
         });
     }
-    next();
+    return next();
 });
 
 export default router;

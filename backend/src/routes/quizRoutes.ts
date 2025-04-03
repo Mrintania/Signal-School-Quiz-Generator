@@ -1,9 +1,41 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
+import { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
 import QuizController from '../controllers/quizController.js';
 import ExportController from '../controllers/exportController.js';
 import { commonRules, validate, sanitizeAll } from '../utils/validator.js';
 import { generalLimiter, aiGenerationLimiter } from '../middlewares/rateLimiter.js';
-import { authenticateToken } from '../middlewares/auth.js'; // Import authentication middleware
+import { authenticateToken } from '../middlewares/auth.js';
+import { pool } from '../config/db.js';
+
+interface TestRow extends RowDataPacket {
+    test: number;
+}
+
+interface TableInfoRow extends RowDataPacket {
+    Table: string;
+}
+
+interface ColumnInfoRow extends RowDataPacket {
+    Field: string;
+    Type: string;
+    Null: string;
+    Key: string;
+    Default: string | null;
+    Extra: string;
+}
+
+interface DatabaseRow {
+    [key: string]: any;
+}
+
+interface TableColumn {
+    Field: string;
+    Type: string;
+    Null: string;
+    Key: string;
+    Default: string | null;
+    Extra: string;
+}
 
 const router = express.Router();
 
@@ -14,7 +46,7 @@ router.use(sanitizeAll);
 router.use(generalLimiter);
 
 // Add authenticateToken to secure routes
-router.use(authenticateToken); // Apply authentication to all quiz routes
+router.use(authenticateToken);
 
 // API Route for generating a quiz - stricter rate limiting for AI calls
 router.post(
@@ -95,23 +127,32 @@ router.patch(
 // API Route for checking title availability
 router.get('/check-title', QuizController.checkTitleAvailability);
 
-router.get('/test-db', async (req, res) => {
+// Database test route
+router.get('/test-db', async (req: Request, res: Response) => {
     try {
+        // Ensure pool is not null
+        if (!pool) {
+            return res.status(500).json({
+                success: false,
+                message: 'Database connection not available'
+            });
+        }
+
         // Test database connection
-        const [rows] = await pool.execute('SELECT 1 as test');
+        const [rows] = await pool.execute<TestRow[]>('SELECT 1 as test');
 
         // Check if quizzes table exists
-        const [tables] = await pool.execute(`
-        SHOW TABLES LIKE 'quizzes'
-      `);
+        const [tables] = await pool.execute<TableInfoRow[]>(`
+            SHOW TABLES LIKE 'quizzes'
+        `);
 
         const quizzesTableExists = tables.length > 0;
 
         if (quizzesTableExists) {
             // Get table structure
-            const [columns] = await pool.execute(`
-          DESCRIBE quizzes
-        `);
+            const [columns] = await pool.execute<ColumnInfoRow[]>(`
+                DESCRIBE quizzes
+            `);
 
             return res.status(200).json({
                 success: true,
@@ -134,8 +175,8 @@ router.get('/test-db', async (req, res) => {
         return res.status(500).json({
             success: false,
             message: 'Database test failed',
-            error: error.message,
-            stack: error.stack
+            error: error instanceof Error ? error.message : 'Unknown error',
+            stack: error instanceof Error ? error.stack : undefined
         });
     }
 });
