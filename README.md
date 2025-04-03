@@ -1,148 +1,141 @@
-# Signal School Quiz Generator: AI-Powered Quiz Creation Platform
+# Signal School Quiz Generator 🧠📝
 
-## 🌟 Project Overview
+## Project Overview
 
-Signal School Quiz Generator is an innovative web application designed to empower educators by leveraging artificial intelligence to create high-quality, customizable quizzes quickly and efficiently. The platform supports multiple question types, language options, and provides a comprehensive quiz management system.
+Signal School Quiz Generator is an innovative educational technology platform designed to revolutionize quiz creation for educators by leveraging cutting-edge artificial intelligence. The system empowers teachers to generate high-quality, customizable quizzes instantly, saving time and enhancing the learning experience.
 
-## ✨ Key Features
+## 🌟 Key Features
 
-- 🤖 **AI-Powered Quiz Generation**: Create professional quizzes instantly using advanced AI technology
-- 🌐 **Multilingual Support**: Generate quizzes in both English and Thai
-- 📝 **Multiple Question Types**: 
+### AI-Powered Quiz Generation
+- **Instant Quiz Creation**: Generate professional-quality quizzes within seconds
+- **Multilingual Support**: Create quizzes in English and Thai
+- **Adaptive Content**: Customize quizzes based on student levels and learning objectives
+
+### Comprehensive Quiz Management
+- **Multiple Question Types**
   - Multiple Choice Quizzes
-  - Essay-style Quizzes
-- 📚 **Comprehensive Quiz Management**:
-  - Save and organize quizzes
-  - Edit quiz titles
-  - Export quizzes to various formats
-- 🎛️ **Customization Options**:
-  - Set difficulty levels
-  - Specify student levels
-  - Add custom instructions
-- 🔄 **Dynamic Question Generation**: 
-  - Generate additional questions for existing quizzes
-  - Avoid duplicate questions
-- 📤 **Export Capabilities**:
-  - Export to plain text
-  - Export to Moodle GIFT format
+  - Essay-style Assessments
+- **Advanced Editing Tools**
+  - Modify quiz titles
+  - Edit and refine questions
+  - Organize quizzes into folders
 
-## 🖥️ Technology Stack
+### Flexible Export Options
+- Export to plain text
+- Moodle GIFT format compatibility
+- Flexible file formats for easy sharing and integration
+
+## 🚀 Technical Architecture
 
 ### Frontend
-- React.js
-- React Router
-- Bootstrap/React-Bootstrap
-- Axios for API communication
+- **Framework**: React.js
+- **State Management**: React Context
+- **UI Components**: Custom components with responsive design
+- **API Communication**: Axios
 
 ### Backend
-- Bun Runtime
-- Express.js
-- MySQL Database
-- Google Gemini AI API
+- **Runtime**: Bun.js
+- **Web Framework**: Express.js
+- **Database**: MySQL
+- **AI Integration**: Google Gemini AI
 
-## 🚀 Quick Start
+### Key Technologies
+- Artificial Intelligence
+- RESTful API Design
+- Multilingual Support
+- Secure Authentication
+- Responsive Web Design
 
-### Prerequisites
-- Node.js (v14 or newer)
-- Bun Runtime (v1.0 or newer)
-- MySQL
+## 🔧 System Requirements
+
+### Minimum Requirements
+- Node.js v16+
+- Bun Runtime v1.0+
+- MySQL 8.0+
 - Google Gemini API Key
 
-### Installation Steps
+## 📦 Installation
 
-1. Clone the repository
+### Quick Setup
 ```bash
+# Clone the repository
 git clone https://github.com/yourusername/signal-school-quiz-generator.git
-cd signal-school-quiz-generator
-```
 
-2. Set up Backend
-```bash
+# Setup Backend
 cd backend
 bun install
 cp .env.example .env
-# Configure .env with your database and API credentials
+# Configure environment variables
 bun start
-```
 
-3. Set up Frontend
-```bash
+# Setup Frontend
 cd ../frontend
 npm install
 npm start
 ```
 
-4. Database Setup
-- Open XAMPP or your MySQL management tool
-- Create a database named `quiz_generator`
-- Import the database schema from `database/database.sql`
-
-## 🔧 Configuration
+## 🔐 Configuration
 
 ### Environment Variables
-Create a `.env` file in the backend directory with the following configurations:
 ```
 # Database Configuration
 DB_HOST=localhost
 DB_USER=your_username
-DB_PASSWORD=your_password
+DB_PASSWORD=your_database_password
 DB_NAME=quiz_generator
 
-# Google Gemini Configuration
-GOOGLE_GEMINI_API_KEY=your_api_key
+# AI Configuration
+GOOGLE_GEMINI_API_KEY=your_gemini_api_key
 
-# Server Configuration
+# Server Settings
 PORT=5000
 ```
 
-## 📋 Project Structure
-
+## 🗂️ Project Structure
 ```
 signal-school-quiz-generator/
-├── backend/
+├── backend/          # Server-side application
 │   ├── src/
-│   │   ├── config/     # Database configuration
-│   │   ├── controllers/# Request handlers
-│   │   ├── models/     # Data models
-│   │   └── routes/     # API route definitions
-│   └── index.js        # Server entry point
-│
-├── frontend/
+│   │   ├── controllers/
+│   │   ├── models/
+│   │   └── routes/
+├── frontend/         # Client-side application
 │   ├── src/
-│   │   ├── components/ # Reusable React components
-│   │   ├── context/    # React context providers
-│   │   ├── pages/      # Page components
-│   │   ├── services/   # API service methods
-│   │   └── translations/ # Multilingual support
-│   └── public/         # Static assets
-│
-└── database/
-    └── database.sql    # Database schema
+│   │   ├── components/
+│   │   ├── pages/
+│   │   └── services/
+└── database/         # Database schema
 ```
 
-## 🔮 Future Roadmap
+## 🔮 Roadmap
 
-1. User Authentication System
-2. Advanced Quiz Sharing Capabilities
-3. Online Exam Platform Integration
-4. Comprehensive Student Performance Analytics
-5. Content Import from Documents
-6. Additional Language Support
+### Upcoming Features
+1. Advanced User Collaboration
+2. Comprehensive Learning Analytics
+3. Enhanced AI Question Generation
+4. Multi-language Expansion
+5. Integration with Learning Management Systems
 
 ## 👨‍💻 About the Developer
 
 **Sgt. Pornsupat Vutisuwan**
-- Main Developer and Creator of Signal School Quiz Generator
+- Lead Developer
+- Educational Technology Innovator
+- Passionate about AI-driven Learning Solutions
 
-## 📄 License
+## 📄 Licensing
 
-This project is licensed under the MIT License. See the LICENSE file for details.
+This project is licensed under the MIT License. See the LICENSE file for complete details.
 
-## 🆘 Support and Feedback
+## 🤝 Contributing
 
-Found a bug? Have a suggestion? Please open an issue on our GitHub repository.
+Contributions are welcome! Please check our GitHub repository for guidelines on how to contribute to the Signal School Quiz Generator.
 
 ## 💡 Powered By
-- Artificial Intelligence
+- Cutting-edge Artificial Intelligence
 - Open-source Community
-- Passion for Educational Technology
+- Passion for Educational Innovation
+
+---
+
+**Made with ❤️ for Educators Worldwide**

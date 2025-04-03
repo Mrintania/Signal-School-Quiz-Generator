@@ -1,0 +1,171 @@
+tree -I 'node_modules'
+.
+├── backend
+│   ├── bun.lockb
+│   ├── db
+│   ├── index.js
+│   ├── logs
+│   │   ├── combined.log
+│   │   └── error.log
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── README.md
+│   ├── src
+│   │   ├── config
+│   │   │   └── db.js
+│   │   ├── controllers
+│   │   │   ├── adminController.js
+│   │   │   ├── authController.js
+│   │   │   ├── dashboardController.js
+│   │   │   ├── exportController.js
+│   │   │   ├── quizController.js
+│   │   │   ├── schoolAdminController.js
+│   │   │   ├── schoolController.js
+│   │   │   └── userController.js
+│   │   ├── middlewares
+│   │   │   ├── auth.js
+│   │   │   ├── cacheMiddleware.js
+│   │   │   ├── rateLimiter.js
+│   │   │   └── security.js
+│   │   ├── models
+│   │   │   └── quiz.js
+│   │   ├── routes
+│   │   │   ├── adminRoutes.js
+│   │   │   ├── authRoutes.js
+│   │   │   ├── dashboardRoutes.js
+│   │   │   ├── quizRoutes.js
+│   │   │   ├── schoolRoutes.js
+│   │   │   └── userRoutes.js
+│   │   ├── services
+│   │   │   ├── aiService.js
+│   │   │   ├── appInitService.js
+│   │   │   ├── authService.js
+│   │   │   ├── cacheService.js
+│   │   │   ├── configService.js
+│   │   │   ├── dbService.js
+│   │   │   ├── errorService.js
+│   │   │   ├── exportService.js
+│   │   │   ├── middlewareService.js
+│   │   │   └── quizService.js
+│   │   └── utils
+│   │       ├── create-admin.js
+│   │       ├── emailService.js
+│   │       ├── logger.js
+│   │       └── validator.js
+│   ├── tsconfig.json
+│   └── uploads
+│       └── profile-images
+├── database.sql
+├── frontend
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── public
+│   │   ├── index.html
+│   │   ├── logo.png
+│   │   ├── manifest.json
+│   │   └── robots.txt
+│   └── src
+│       ├── App.css
+│       ├── App.js
+│       ├── assets
+│       │   └── logo.png
+│       ├── components
+│       │   ├── admin
+│       │   │   ├── AddUserModal.js
+│       │   │   ├── AdminNavigation.js
+│       │   │   ├── AdminSchoolsManagement.js
+│       │   │   ├── AdminSidebar.js
+│       │   │   ├── AdminStats.js
+│       │   │   ├── AdminSystemSettings.js
+│       │   │   ├── AdminUsersManagement.js
+│       │   │   ├── ContentManagementTab.js
+│       │   │   ├── DashboardContent.js
+│       │   │   ├── PendingUsers.js
+│       │   │   ├── QuickActions.js
+│       │   │   ├── SchoolsContent.js
+│       │   │   ├── SettingsContent.js
+│       │   │   ├── StatCards.js
+│       │   │   ├── SystemStatus.js
+│       │   │   ├── UserRegistrations.js
+│       │   │   └── UsersContent.js
+│       │   ├── auth
+│       │   │   └── AuthRoutes.js
+│       │   ├── Dashboard.js
+│       │   ├── DebugLayout.js
+│       │   ├── ErrorBoundary.js
+│       │   ├── ErrorMessages.js
+│       │   ├── ImportQuiz.js
+│       │   ├── LanguageSelector.js
+│       │   ├── Layout.js
+│       │   ├── library
+│       │   │   ├── ActionButtons.js
+│       │   │   ├── BreadcrumbNav.js
+│       │   │   ├── FolderRow.js
+│       │   │   ├── LibraryTable.js
+│       │   │   ├── modals
+│       │   │   │   ├── CreateFolderModal.js
+│       │   │   │   ├── DeleteFolderModal.js
+│       │   │   │   ├── DeleteQuizModal.js
+│       │   │   │   ├── MoveModal.js
+│       │   │   │   ├── RenameFolderModal.js
+│       │   │   │   └── RenameQuizModal.js
+│       │   │   ├── QuizRow.js
+│       │   │   └── SearchBar.js
+│       │   ├── LoadingOverlay.js
+│       │   ├── Navbar.js
+│       │   ├── Pagination.js
+│       │   ├── PrintableQuiz.js
+│       │   ├── QuizActionMenu.js
+│       │   ├── QuizStatistics.js
+│       │   ├── SearchBar.js
+│       │   └── Sidebar.js
+│       ├── context
+│       │   ├── AuthContext.js
+│       │   ├── LanguageContext.js
+│       │   ├── LibraryContext.js
+│       │   ├── NotificationContext.js
+│       │   ├── Providers.js
+│       │   ├── QuizContext.js
+│       │   └── ThemeContext.js
+│       ├── hocs
+│       │   └── withErrorHandling.js
+│       ├── hooks
+│       │   ├── useFolders.js
+│       │   ├── useLibrarySort.js
+│       │   └── useQuizzes.js
+│       ├── index.css
+│       ├── index.js
+│       ├── pages
+│       │   ├── AccountPage.js
+│       │   ├── AdminDashboardPage.js
+│       │   ├── AdminUsersPage.js
+│       │   ├── CreateQuizPage.js
+│       │   ├── ErrorPage.js
+│       │   ├── ForgotPasswordPage.js
+│       │   ├── HomePage.js
+│       │   ├── LibraryPage.js
+│       │   ├── LoginPage.js
+│       │   ├── QuizResultPage.js
+│       │   ├── RegisterPage.js
+│       │   ├── ResetPasswordPage.js
+│       │   ├── UnauthorizedPage.js
+│       │   └── ViewQuizPage.js
+│       ├── reportWebVitals.js
+│       ├── services
+│       │   ├── adminService.js
+│       │   ├── api.js
+│       │   ├── authApi.js
+│       │   ├── index.js
+│       │   ├── schoolRoutes.js
+│       │   └── userRoutes.js
+│       ├── setupTests.js
+│       └── utils
+│           ├── errorUtils.js
+│           ├── globalErrorHandler.js
+│           └── ideas.js
+├── logs
+├── README.md
+└── uploads
+    └── profile-images
+
+32 directories, 136 files
