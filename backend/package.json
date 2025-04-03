@@ -1,21 +1,36 @@
 {
   "name": "backend",
-  "module": "index.js",
+  "module": "index.ts",
   "type": "module",
   "devDependencies": {
+    "@types/bcrypt": "^5.0.0",
     "@types/bun": "^1.2.8",
-    "nodemon": "^3.0.1"
-  },
-  "peerDependencies": {
+    "@types/cors": "^2.8.16",
+    "@types/dotenv": "^6.1.1",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.5",
+    "@types/multer": "^1.4.12",
+    "@types/node": "^20.10.0",
+    "@types/nodemailer": "^6.4.17",
+    "@types/winston": "^2.4.4",
+    "nodemon": "^3.0.1",
+    "ts-node": "^10.9.1",
+    "tsx": "^4.19.3",
     "typescript": "^5.0.0"
   },
+  "scripts": {
+    "start": "node dist/index.js",
+    "build": "tsc",
+    "dev": "nodemon --watch 'src/**/*.ts' --exec 'tsx' src/index.ts",
+    "debug": "nodemon --watch 'src/**/*.ts' --exec 'ts-node --inspect' src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0",
     "@google/generative-ai": "^0.24.0",
     "bcrypt": "^5.1.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
-    "express": "^4.21.2",
+    "express": "^5.1.0",
     "express-rate-limit": "^7.5.0",
     "express-validator": "^7.2.1",
     "helmet": "^8.1.0",
@@ -23,15 +38,8 @@
     "jsonwebtoken": "^9.0.2",
     "multer": "^1.4.5-lts.2",
     "mysql2": "^3.14.0",
-    "node-cache": "^5.1.2",
     "nodemailer": "^6.10.0",
-    "openai": "^4.87.3",
     "winston": "^3.17.0",
     "xss-clean": "^0.1.4"
-  },
-  "scripts": {
-    "start": "bun run index.js",
-    "dev": "bun --watch index.js",
-    "debug": "bun --inspect --watch index.js"
   }
 }

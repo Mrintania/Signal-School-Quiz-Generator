@@ -28,7 +28,7 @@ async function main() {
     server.on('error', (error) => {
       logger.error('Server error:', error);
 
-      if (error.code === 'EADDRINUSE') {
+      if ((error as any).code === 'EADDRINUSE') {
         logger.error(`Port ${PORT} is already in use. Please use a different port.`);
         process.exit(1);
       }

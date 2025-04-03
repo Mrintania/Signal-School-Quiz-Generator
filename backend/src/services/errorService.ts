@@ -1,18 +1,23 @@
-// backend/src/services/errorService.js
+// backend/src/services/errorService.ts
+import { Request, Response, NextFunction } from 'express';
 import { logger } from '../utils/logger.js';
 import configService from './configService.js';
 
 /**
  * Custom error class with HTTP status
  */
-class AppError extends Error {
+export class AppError extends Error {
+    statusCode: number;
+    code: string;
+    isOperational: boolean;
+
     /**
      * Create an application error
      * @param {string} message - Error message
      * @param {number} statusCode - HTTP status code
      * @param {string} code - Error code (optional)
      */
-    constructor(message, statusCode = 500, code = '') {
+    constructor(message: string, statusCode: number = 500, code: string = '') {
         super(message);
         this.statusCode = statusCode;
         this.code = code;
@@ -22,17 +27,26 @@ class AppError extends Error {
     }
 }
 
+// Define an interface for error response
+interface ErrorResponse {
+    success: boolean;
+    message: string;
+    code?: string;
+    error?: string;
+    stack?: string;
+}
+
 /**
  * Service for handling and processing errors
  */
-class ErrorService {
+export class ErrorService {
     /**
      * Create a 400 Bad Request error
      * @param {string} message - Error message
      * @param {string} code - Error code (optional)
      * @returns {AppError} Application error
      */
-    static badRequest(message = 'Bad Request', code = 'BAD_REQUEST') {
+    static badRequest(message: string = 'Bad Request', code: string = 'BAD_REQUEST'): AppError {
         return new AppError(message, 400, code);
     }
 
@@ -42,7 +56,7 @@ class ErrorService {
      * @param {string} code - Error code (optional)
      * @returns {AppError} Application error
      */
-    static unauthorized(message = 'Unauthorized', code = 'UNAUTHORIZED') {
+    static unauthorized(message: string = 'Unauthorized', code: string = 'UNAUTHORIZED'): AppError {
         return new AppError(message, 401, code);
     }
 
@@ -52,7 +66,7 @@ class ErrorService {
      * @param {string} code - Error code (optional)
      * @returns {AppError} Application error
      */
-    static forbidden(message = 'Forbidden', code = 'FORBIDDEN') {
+    static forbidden(message: string = 'Forbidden', code: string = 'FORBIDDEN'): AppError {
         return new AppError(message, 403, code);
     }
 
@@ -62,7 +76,7 @@ class ErrorService {
      * @param {string} code - Error code (optional)
      * @returns {AppError} Application error
      */
-    static notFound(message = 'Not Found', code = 'NOT_FOUND') {
+    static notFound(message: string = 'Not Found', code: string = 'NOT_FOUND'): AppError {
         return new AppError(message, 404, code);
     }
 
@@ -72,7 +86,7 @@ class ErrorService {
      * @param {string} code - Error code (optional)
      * @returns {AppError} Application error
      */
-    static conflict(message = 'Conflict', code = 'CONFLICT') {
+    static conflict(message: string = 'Conflict', code: string = 'CONFLICT'): AppError {
         return new AppError(message, 409, code);
     }
 
@@ -82,7 +96,7 @@ class ErrorService {
      * @param {string} code - Error code (optional)
      * @returns {AppError} Application error
      */
-    static validation(message = 'Validation Error', code = 'VALIDATION_ERROR') {
+    static validation(message: string = 'Validation Error', code: string = 'VALIDATION_ERROR'): AppError {
         return new AppError(message, 422, code);
     }
 
@@ -92,7 +106,7 @@ class ErrorService {
      * @param {string} code - Error code (optional)
      * @returns {AppError} Application error
      */
-    static tooManyRequests(message = 'Too Many Requests', code = 'TOO_MANY_REQUESTS') {
+    static tooManyRequests(message: string = 'Too Many Requests', code: string = 'TOO_MANY_REQUESTS'): AppError {
         return new AppError(message, 429, code);
     }
 
@@ -102,7 +116,7 @@ class ErrorService {
      * @param {string} code - Error code (optional)
      * @returns {AppError} Application error
      */
-    static internal(message = 'Internal Server Error', code = 'INTERNAL_ERROR') {
+    static internal(message: string = 'Internal Server Error', code: string = 'INTERNAL_ERROR'): AppError {
         return new AppError(message, 500, code);
     }
 
@@ -112,7 +126,7 @@ class ErrorService {
      * @param {string} code - Error code (optional)
      * @returns {AppError} Application error
      */
-    static serviceUnavailable(message = 'Service Unavailable', code = 'SERVICE_UNAVAILABLE') {
+    static serviceUnavailable(message: string = 'Service Unavailable', code: string = 'SERVICE_UNAVAILABLE'): AppError {
         return new AppError(message, 503, code);
     }
 
@@ -122,7 +136,7 @@ class ErrorService {
      * @param {string} operation - Database operation
      * @returns {AppError} Application error
      */
-    static database(error, operation = 'database operation') {
+    static database(error: Error, operation: string = 'database operation'): AppError {
         logger.error(`Database error during ${operation}:`, error);
 
         return new AppError(
@@ -135,12 +149,15 @@ class ErrorService {
     /**
      * Handle error and prepare response
      * @param {Error} err - Error object
-     * @param {Object} req - Express request object
-     * @returns {Object} Error response object
+     * @param {Request} req - Express request object
+     * @returns {Object} Error response object with statusCode and response
      */
-    static handleError(err, req) {
+    static handleError(err: Error | AppError, req?: Request): { statusCode: number; response: ErrorResponse } {
+        // Cast to AppError if possible
+        const appError = err instanceof AppError ? err : new AppError(err.message);
+        
         // Log the error
-        if (!err.isOperational) {
+        if (!appError.isOperational) {
             logger.error(
                 'Unexpected error:',
                 {
@@ -151,15 +168,15 @@ class ErrorService {
                     body: req?.body,
                     params: req?.params,
                     query: req?.query,
-                    user: req?.user
+                    user: (req as any)?.user
                 }
             );
         } else {
             logger.warn(
-                `Operational error (${err.statusCode}):`,
+                `Operational error (${appError.statusCode}):`,
                 {
                     message: err.message,
-                    code: err.code,
+                    code: appError.code,
                     url: req?.originalUrl,
                     method: req?.method
                 }
@@ -167,16 +184,16 @@ class ErrorService {
         }
 
         // Prepare error response
-        const statusCode = err.statusCode || 500;
+        const statusCode = appError.statusCode || 500;
 
-        const response = {
+        const response: ErrorResponse = {
             success: false,
             message: err.message || 'An unexpected error occurred'
         };
 
         // Include error code if available
-        if (err.code) {
-            response.code = err.code;
+        if (appError.code) {
+            response.code = appError.code;
         }
 
         // Include detailed error info in development
@@ -193,7 +210,7 @@ class ErrorService {
      * @returns {Function} Express middleware
      */
     static errorHandlerMiddleware() {
-        return (err, req, res, next) => {
+        return (err: Error, req: Request, res: Response, next: NextFunction): void => {
             const { statusCode, response } = ErrorService.handleError(err, req);
             res.status(statusCode).json(response);
         };
@@ -204,11 +221,9 @@ class ErrorService {
      * @returns {Function} Express middleware
      */
     static notFoundMiddleware() {
-        return (req, res, next) => {
+        return (req: Request, res: Response, next: NextFunction): void => {
             const err = ErrorService.notFound(`Route not found: ${req.originalUrl}`);
             next(err);
         };
     }
 }
-
-export { ErrorService, AppError };

@@ -1,6 +1,7 @@
-// backend/src/services/configService.js
+// backend/src/services/configService.ts
 import dotenv from 'dotenv';
 import { logger } from '../utils/logger.js';
+import { AppConfig } from '../types/index.js';
 
 // Load environment variables
 dotenv.config();
@@ -9,11 +10,13 @@ dotenv.config();
  * Service for centralized configuration management
  */
 class ConfigService {
+    private config: AppConfig;
+
     constructor() {
         this.config = {
             // Server configuration
             server: {
-                port: this._getEnv('PORT', 3001),
+                port: this._getIntEnv('PORT', 3001),
                 environment: this._getEnv('NODE_ENV', 'development'),
                 frontendUrl: this._getEnv('FRONTEND_URL', 'http://localhost:3000'),
                 skipAuth: this._getEnv('SKIP_AUTH', 'false') === 'true',
@@ -94,8 +97,8 @@ class ConfigService {
 
         // Log config loading (excluding sensitive data)
         const sanitizedConfig = { ...this.config };
-        delete sanitizedConfig.database.password;
-        delete sanitizedConfig.jwt.secret;
+        delete (sanitizedConfig.database as { password?: string }).password;
+        delete (sanitizedConfig.jwt as { secret?: string }).secret;
         delete sanitizedConfig.email.smtp.password;
         delete sanitizedConfig.email.devSmtp.password;
         delete sanitizedConfig.apiKeys;
@@ -110,7 +113,7 @@ class ConfigService {
      * @returns {string} Environment variable value or default
      * @private
      */
-    _getEnv(key, defaultValue) {
+    private _getEnv(key: string, defaultValue: string): string {
         return process.env[key] || defaultValue;
     }
 
@@ -121,7 +124,7 @@ class ConfigService {
      * @returns {number} Environment variable value as integer or default
      * @private
      */
-    _getIntEnv(key, defaultValue) {
+    private _getIntEnv(key: string, defaultValue: number): number {
         const value = process.env[key];
         return value ? parseInt(value, 10) : defaultValue;
     }
@@ -129,15 +132,15 @@ class ConfigService {
     /**
      * Get configuration value
      * @param {string} key - Configuration key (dot notation)
-     * @param {*} defaultValue - Default value if not found
-     * @returns {*} Configuration value
+     * @param {T} defaultValue - Default value if not found
+     * @returns {T} Configuration value
      */
-    get(key, defaultValue = null) {
+    get<T>(key: string, defaultValue: T = null as unknown as T): T {
         // Split the key by dots
         const keys = key.split('.');
 
         // Traverse the config object
-        let result = this.config;
+        let result: any = this.config;
         for (const k of keys) {
             if (result && typeof result === 'object' && k in result) {
                 result = result[k];
@@ -146,14 +149,14 @@ class ConfigService {
             }
         }
 
-        return result;
+        return result as T;
     }
 
     /**
      * Get all configuration
-     * @returns {Object} Full configuration object
+     * @returns {AppConfig} Full configuration object
      */
-    getAll() {
+    getAll(): AppConfig {
         return { ...this.config };
     }
 
@@ -161,7 +164,7 @@ class ConfigService {
      * Check if environment is production
      * @returns {boolean} True if production
      */
-    isProduction() {
+    isProduction(): boolean {
         return this.config.server.environment === 'production';
     }
 
@@ -169,7 +172,7 @@ class ConfigService {
      * Check if environment is development
      * @returns {boolean} True if development
      */
-    isDevelopment() {
+    isDevelopment(): boolean {
         return this.config.server.environment === 'development';
     }
 
@@ -177,7 +180,7 @@ class ConfigService {
      * Check if environment is test
      * @returns {boolean} True if test
      */
-    isTest() {
+    isTest(): boolean {
         return this.config.server.environment === 'test';
     }
 }

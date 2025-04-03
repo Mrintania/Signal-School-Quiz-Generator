@@ -1,7 +1,8 @@
-// backend/src/services/middlewareService.js
-import { rateLimit } from 'express-rate-limit';
+// backend/src/services/middlewareService.ts
+import { Request, Response, NextFunction } from 'express';
 import { logger } from '../utils/logger.js';
 import { pool } from '../config/db.js';
+import { AuthRequest } from '../types/index.js';
 
 /**
  * Service for managing middleware functions
@@ -12,15 +13,19 @@ class MiddlewareService {
      * @returns {Function} Express middleware
      */
     static createActivityLogger() {
-        return (req, res, next) => {
+        return (req: Request, res: Response, next: NextFunction): void => {
             // Only log activities for authenticated users
-            if (req.user && req.user.userId) {
+            if ((req as AuthRequest).user?.userId) {
                 // Attach logger to request object
-                req.logActivity = async (activityType, description) => {
+                (req as AuthRequest).logActivity = async (activityType: string, description: string): Promise<void> => {
                     try {
+                        if (!pool) {
+                            throw new Error('Database connection not available');
+                        }
+                        
                         await pool.execute(
                             'INSERT INTO user_activities (user_id, activity_type, description, ip_address, user_agent) VALUES (?, ?, ?, ?, ?)',
-                            [req.user.userId, activityType, description, req.ip, req.headers['user-agent']]
+                            [(req as AuthRequest).user?.userId, activityType, description, req.ip, req.headers['user-agent']]
                         );
                     } catch (error) {
                         logger.error('Error logging activity:', error);

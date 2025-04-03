@@ -1,20 +1,30 @@
-// backend/src/services/cacheService.js
+// src/services/cacheService.ts
 import { logger } from '../utils/logger.js';
 
 /**
  * Cache strategies
  * @enum {string}
  */
-const CacheStrategy = {
-    MEMORY: 'memory',
+export enum CacheStrategy {
+    MEMORY = 'memory',
     // Could add REDIS or other strategies later
-};
+}
 
 /**
  * Cache service for performance optimization
  */
-class CacheService {
-    constructor(strategy = CacheStrategy.MEMORY, options = {}) {
+export class CacheService {
+    private strategy: CacheStrategy;
+    private options: {
+        defaultTtl: number;
+        maxItems: number;
+        [key: string]: any;
+    };
+    private cache!: Map<string, any>;
+    private expiries!: Map<string, number>;
+    private lastAccess!: Map<string, number>;
+
+    constructor(strategy: CacheStrategy = CacheStrategy.MEMORY, options: Record<string, any> = {}) {
         this.strategy = strategy;
         this.options = {
             defaultTtl: 600, // 10 minutes
@@ -29,7 +39,7 @@ class CacheService {
     /**
      * Initialize cache storage
      */
-    initializeCache() {
+    private initializeCache(): void {
         switch (this.strategy) {
             case CacheStrategy.MEMORY:
                 this.cache = new Map();
@@ -51,18 +61,18 @@ class CacheService {
      * @param {string} key - Cache key
      * @returns {*} Cached value or undefined if not found
      */
-    get(key) {
+    get<T>(key: string): T | undefined {
         switch (this.strategy) {
             case CacheStrategy.MEMORY:
                 // Check if key exists and is not expired
                 if (this.cache.has(key)) {
                     const expiry = this.expiries.get(key);
 
-                    if (expiry > Date.now()) {
+                    if (expiry && expiry > Date.now()) {
                         // Update last access time for LRU
                         this.lastAccess.set(key, Date.now());
 
-                        return this.cache.get(key);
+                        return this.cache.get(key) as T;
                     } else {
                         // Item expired, remove it
                         this.delete(key);
@@ -71,6 +81,8 @@ class CacheService {
                 return undefined;
 
             // Add other strategies here
+            default:
+                return undefined;
         }
     }
 
@@ -80,7 +92,7 @@ class CacheService {
      * @param {*} value - Value to cache
      * @param {number} ttl - Time to live in seconds (optional)
      */
-    set(key, value, ttl = this.options.defaultTtl) {
+    set(key: string, value: any, ttl: number = this.options.defaultTtl): void {
         switch (this.strategy) {
             case CacheStrategy.MEMORY:
                 // Check if cache is full and we need to evict
@@ -101,7 +113,7 @@ class CacheService {
      * Delete an item from cache
      * @param {string} key - Cache key
      */
-    delete(key) {
+    delete(key: string): void {
         switch (this.strategy) {
             case CacheStrategy.MEMORY:
                 this.cache.delete(key);
@@ -116,7 +128,7 @@ class CacheService {
     /**
      * Clear all items from cache
      */
-    clear() {
+    clear(): void {
         switch (this.strategy) {
             case CacheStrategy.MEMORY:
                 this.cache.clear();
@@ -132,7 +144,7 @@ class CacheService {
      * Invalidate cache entries by pattern
      * @param {string} pattern - Pattern to match cache keys
      */
-    invalidateByPattern(pattern) {
+    invalidateByPattern(pattern: string): void {
         switch (this.strategy) {
             case CacheStrategy.MEMORY:
                 // Convert keys to array so we can iterate while deleting
@@ -155,7 +167,7 @@ class CacheService {
      * Evict least recently used items
      * @param {number} count - Number of items to evict (default: 1)
      */
-    evictLRU(count = 1) {
+    private evictLRU(count: number = 1): void {
         if (this.strategy === CacheStrategy.MEMORY) {
             // Sort keys by last access time
             const sortedKeys = [...this.lastAccess.entries()]
@@ -164,8 +176,12 @@ class CacheService {
 
             // Evict the oldest items
             for (let i = 0; i < Math.min(count, sortedKeys.length); i++) {
-                this.delete(sortedKeys[i]);
+                const key = sortedKeys[i];
+                if (key !== undefined) {
+                    this.delete(key);
+                }
             }
+            
         }
     }
 
@@ -176,8 +192,8 @@ class CacheService {
      * @param {number} ttl - Time to live in seconds (optional)
      * @returns {Promise<*>} Cached or computed value
      */
-    async getOrCompute(key, compute, ttl = this.options.defaultTtl) {
-        const cachedValue = this.get(key);
+    async getOrCompute<T>(key: string, compute: () => Promise<T>, ttl: number = this.options.defaultTtl): Promise<T> {
+        const cachedValue = this.get<T>(key);
 
         if (cachedValue !== undefined) {
             return cachedValue;
@@ -196,7 +212,7 @@ class CacheService {
      * Get cache statistics
      * @returns {Object} Cache statistics
      */
-    getStats() {
+    getStats(): Record<string, any> {
         switch (this.strategy) {
             case CacheStrategy.MEMORY:
                 return {
@@ -216,6 +232,6 @@ class CacheService {
 }
 
 // Create a singleton instance
-const cacheService = new CacheService(CacheStrategy.MEMORY);
+export const cacheService = new CacheService(CacheStrategy.MEMORY);
 
-export { cacheService, CacheService, CacheStrategy };
+export default { cacheService, CacheService, CacheStrategy };

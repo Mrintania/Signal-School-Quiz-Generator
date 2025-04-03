@@ -1,6 +1,7 @@
 import winston from 'winston';
 import path from 'path';
 import fs from 'fs';
+import { Request, Response, NextFunction } from 'express';
 
 // Define log levels
 const levels = {
@@ -21,7 +22,7 @@ const colors = {
 };
 
 // Set log level based on environment
-const level = () => {
+const level = (): string => {
     const env = process.env.NODE_ENV || 'development';
     return env === 'development' ? 'debug' : 'info';
 };
@@ -87,8 +88,8 @@ const logger = winston.createLogger({
 // Add colors to Winston
 winston.addColors(colors);
 
-// HTTP request logger
-const httpLogger = (req, res, next) => {
+// HTTP request logger middleware
+const httpLogger = (req: Request, res: Response, next: NextFunction): void => {
     const { method, url, ip } = req;
 
     // Log request start
@@ -121,20 +122,7 @@ const httpLogger = (req, res, next) => {
     next();
 };
 
-// Log uncaught exceptions and unhandled rejections
-process.on('uncaughtException', (error) => {
-    logger.error('Uncaught Exception:', error);
-    // Give time to log the error before exiting
-    setTimeout(() => {
-        process.exit(1);
-    }, 1000);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-    logger.error('Unhandled Rejection:', reason);
-});
-
-// ตรวจสอบและสร้างโฟลเดอร์ logs ถ้ายังไม่มี
+// Ensure logs directory exists
 if (!fs.existsSync('logs')) {
     fs.mkdirSync('logs');
 }

@@ -1,5 +1,5 @@
-// backend/src/services/appInitService.js
-import express from 'express';
+// src/services/appInitService.ts
+import express, { Express } from 'express';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -32,9 +32,9 @@ const __dirname = path.dirname(__filename);
 class AppInitService {
     /**
      * Initialize and configure the Express application
-     * @returns {Object} Configured Express app
+     * @returns {Promise<Express>} Configured Express app
      */
-    static initializeApp() {
+    static async initializeApp(): Promise<Express> {
         // Create Express app
         const app = express();
 
@@ -60,7 +60,7 @@ class AppInitService {
      * Ensure required directories exist
      * @private
      */
-    static _ensureDirectoryStructure() {
+    private static _ensureDirectoryStructure(): void {
         const directories = [
             path.join(__dirname, '../../../logs'),
             path.join(__dirname, '../../../uploads'),
@@ -77,10 +77,10 @@ class AppInitService {
 
     /**
      * Apply security-related middleware
-     * @param {Object} app - Express app
+     * @param {Express} app - Express app
      * @private
      */
-    static _applySecurityMiddleware(app) {
+    private static _applySecurityMiddleware(app: Express): void {
         // Apply security middleware
         applySecurityMiddleware(app);
 
@@ -90,10 +90,10 @@ class AppInitService {
 
     /**
      * Apply common middleware
-     * @param {Object} app - Express app
+     * @param {Express} app - Express app
      * @private
      */
-    static _applyCommonMiddleware(app) {
+    private static _applyCommonMiddleware(app: Express): void {
         // HTTP request logging
         app.use(httpLogger);
 
@@ -113,10 +113,10 @@ class AppInitService {
 
     /**
      * Setup application routes
-     * @param {Object} app - Express app
+     * @param {Express} app - Express app
      * @private
      */
-    static _setupRoutes(app) {
+    private static _setupRoutes(app: Express): void {
         // API Routes
         const apiPrefix = '/api';
 
@@ -151,10 +151,10 @@ class AppInitService {
 
     /**
      * Setup error handling middleware
-     * @param {Object} app - Express app
+     * @param {Express} app - Express app
      * @private
      */
-    static _setupErrorHandling(app) {
+    private static _setupErrorHandling(app: Express): void {
         // 404 handler for API routes
         app.use('/api/*', (req, res) => {
             logger.warn(`Route not found: ${req.originalUrl}`);
@@ -165,20 +165,7 @@ class AppInitService {
         });
 
         // Global error handler
-        app.use((err, req, res, next) => {
-            logger.error(`Global error handler: ${err.message}`, {
-                url: req.originalUrl,
-                method: req.method,
-                stack: err.stack
-            });
-
-            const statusCode = err.statusCode || 500;
-
-            res.status(statusCode).json({
-                success: false,
-                message: process.env.NODE_ENV === 'production' ? 'Server error' : err.message
-            });
-        });
+        app.use(ErrorService.errorHandlerMiddleware());
     }
 }
 

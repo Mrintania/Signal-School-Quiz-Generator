@@ -1,8 +1,15 @@
-// backend/src/utils/validator.js
-import { body, param, query, validationResult } from 'express-validator';
+// backend/src/utils/validator.ts
+import { body, param, query, validationResult, ValidationChain } from 'express-validator';
+import { Request, Response, NextFunction } from 'express';
+
+// Password validation interface
+interface PasswordValidationResult {
+  isValid: boolean;
+  message?: string;
+}
 
 // Password validation function
-export const validatePassword = (password) => {
+export const validatePassword = (password: string): PasswordValidationResult => {
   // Minimum 8 characters, at least one uppercase letter, one lowercase letter, and one number
   const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
   
@@ -25,9 +32,53 @@ export const validatePassword = (password) => {
   };
 };
 
+// Interface for validation rules
+interface ValidationRules {
+  quizRules: {
+    create: ValidationChain[];
+    generate: ValidationChain[];
+    rename: ValidationChain[];
+    getById: ValidationChain[];
+    delete: ValidationChain[];
+    updateQuestions: ValidationChain[];
+    move: ValidationChain[];
+  };
+  authRules: {
+    register: ValidationChain[];
+    login: ValidationChain[];
+    verifyEmail: ValidationChain[];
+    resendVerification: ValidationChain[];
+    forgotPassword: ValidationChain[];
+    resetPassword: ValidationChain[];
+    acceptInvitation: ValidationChain[];
+    googleAuth: ValidationChain[];
+  };
+  userRules: {
+    updateProfile: ValidationChain[];
+    updatePassword: ValidationChain[];
+    updateSettings: ValidationChain[];
+    closeAccount: ValidationChain[];
+  };
+  schoolRules: {
+    createSchool: ValidationChain[];
+    updateSchool: ValidationChain[];
+    createDepartment: ValidationChain[];
+    updateDepartment: ValidationChain[];
+    inviteUser: ValidationChain[];
+    updateUserRole: ValidationChain[];
+    removeUser: ValidationChain[];
+    addUserToDepartment: ValidationChain[];
+    removeUserFromDepartment: ValidationChain[];
+  };
+  adminRules: {
+    updateUserStatus: ValidationChain[];
+    updateUserRole: ValidationChain[];
+  };
+}
+
 // Common validation rules
-const commonRules = {
-  // Quiz validation rules (kept from original)
+const commonRules: ValidationRules = {
+  // Quiz validation rules
   quizRules: {
     create: [
       body('title').trim().notEmpty().withMessage('Title is required').isLength({ max: 200 }).withMessage('Title cannot exceed 200 characters'),
@@ -203,7 +254,7 @@ const commonRules = {
 };
 
 // Middleware to check for validation errors
-const validate = (req, res, next) => {
+const validate = (req: Request, res: Response, next: NextFunction): void | Response => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({
@@ -216,7 +267,7 @@ const validate = (req, res, next) => {
 };
 
 // Sanitize and trim all inputs
-const sanitizeAll = (req, res, next) => {
+const sanitizeAll = (req: Request, res: Response, next: NextFunction): void => {
   // Sanitize body
   if (req.body) {
     for (const key in req.body) {
@@ -230,7 +281,7 @@ const sanitizeAll = (req, res, next) => {
   if (req.query) {
     for (const key in req.query) {
       if (typeof req.query[key] === 'string') {
-        req.query[key] = req.query[key].trim();
+        req.query[key] = (req.query[key] as string).trim();
       }
     }
   }
