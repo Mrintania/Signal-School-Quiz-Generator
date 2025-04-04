@@ -6,6 +6,8 @@ import { commonRules, validate, sanitizeAll } from '../utils/validator.js';
 import { generalLimiter, aiGenerationLimiter } from '../middlewares/rateLimiter.js';
 import { authenticateToken } from '../middlewares/auth.js';
 import { pool } from '../config/db.js';
+import { AuthRequest } from '../types/index.js';
+import QuizService from '../services/quizService.js';
 
 interface TestRow extends RowDataPacket {
     test: number;
@@ -179,6 +181,141 @@ router.get('/test-db', async (req: Request, res: Response) => {
             stack: error instanceof Error ? error.stack : undefined
         });
     }
+
+
 });
+
+// 1. เส้นทางสำหรับสร้างโฟลเดอร์ใหม่
+router.post(
+    '/folders',
+    async (req: AuthRequest, res: Response) => {
+        try {
+            const { name, parentId } = req.body;
+            const userId = req.user?.userId;
+
+            if (!userId) {
+                return res.status(401).json({
+                    success: false,
+                    message: 'Authentication required'
+                });
+            }
+
+            // ตรวจสอบชื่อโฟลเดอร์
+            if (!name || typeof name !== 'string' || name.trim() === '') {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Folder name is required'
+                });
+            }
+
+            // สร้างโฟลเดอร์
+            const result = await QuizService.createFolder(name.trim(), userId, parentId || null);
+
+            if (result.success) {
+                return res.status(201).json({
+                    success: true,
+                    message: 'Folder created successfully',
+                    folderId: result.folderId
+                });
+            } else {
+                return res.status(500).json({
+                    success: false,
+                    message: 'Failed to create folder',
+                    error: result.error
+                });
+            }
+        } catch (error) {
+            console.error('Error creating folder:', error);
+            return res.status(500).json({
+                success: false,
+                message: 'An error occurred while creating the folder',
+                error: process.env.NODE_ENV === 'development' ? error instanceof Error ? error.message : 'Unknown error' : undefined
+            });
+        }
+    }
+);
+
+// 2. เส้นทางสำหรับดึงข้อมูลโฟลเดอร์ทั้งหมดของผู้ใช้
+router.get(
+    '/folders',
+    async (req: AuthRequest, res: Response) => {
+        try {
+            const userId = req.user?.userId;
+
+            if (!userId) {
+                return res.status(401).json({
+                    success: false,
+                    message: 'Authentication required'
+                });
+            }
+
+            const folders = await QuizService.getUserFolders(userId);
+
+            return res.status(200).json({
+                success: true,
+                data: folders
+            });
+        } catch (error) {
+            console.error('Error fetching folders:', error);
+            return res.status(500).json({
+                success: false,
+                message: 'An error occurred while fetching folders',
+                error: process.env.NODE_ENV === 'development' ? error instanceof Error ? error.message : 'Unknown error' : undefined
+            });
+        }
+    }
+);
+
+// 3. เส้นทางสำหรับดึงข้อมูลข้อสอบในโฟลเดอร์
+router.get(
+    '/folders/:folderId/quizzes',
+    async (req: AuthRequest, res: Response) => {
+        try {
+            const { folderId } = req.params;
+            const userId = req.user?.userId;
+            const page = parseInt(req.query.page as string) || 1;
+            const limit = parseInt(req.query.limit as string) || 100;
+            const offset = (page - 1) * limit;
+
+            if (!userId) {
+                return res.status(401).json({
+                    success: false,
+                    message: 'Authentication required'
+                });
+            }
+
+            // ตรวจสอบว่าผู้ใช้มีสิทธิ์เข้าถึงโฟลเดอร์นี้หรือไม่
+            const hasAccess = await QuizService.checkFolderAccess(folderId, userId);
+            if (!hasAccess && folderId !== 'root' && folderId !== '0') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'You do not have access to this folder'
+                });
+            }
+
+            // ดึงข้อมูลข้อสอบในโฟลเดอร์
+            const result = await QuizService.getFolderQuizzes(folderId, { limit, offset });
+
+            // สร้างการตอบกลับพร้อมข้อมูลการแบ่งหน้า
+            return res.status(200).json({
+                success: true,
+                data: result.quizzes,
+                pagination: {
+                    total: result.total,
+                    page,
+                    limit,
+                    totalPages: Math.ceil(result.total / limit)
+                }
+            });
+        } catch (error) {
+            console.error('Error fetching folder quizzes:', error);
+            return res.status(500).json({
+                success: false,
+                message: 'An error occurred while fetching folder quizzes',
+                error: process.env.NODE_ENV === 'development' ? error instanceof Error ? error.message : 'Unknown error' : undefined
+            });
+        }
+    }
+);
 
 export default router;
