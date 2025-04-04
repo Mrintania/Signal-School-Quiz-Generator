@@ -377,10 +377,13 @@ export {
   adminService
 };
 
-export default {
+// Assign the object to a variable before exporting
+const services = {
   quizService,
   authService,
   userService,
   dashboardService,
   adminService
 };
+
+export default services;

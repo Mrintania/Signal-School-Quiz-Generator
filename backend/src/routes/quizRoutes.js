@@ -4,6 +4,7 @@ import ExportController from '../controllers/exportController.js';
 import { commonRules, validate, sanitizeAll } from '../utils/validator.js';
 import { generalLimiter, aiGenerationLimiter } from '../middlewares/rateLimiter.js';
 import { authenticateToken } from '../middlewares/auth.js'; // Import authentication middleware
+import { pool } from '../config/db.js';
 
 const router = express.Router();
 
@@ -87,9 +88,31 @@ router.patch(
 // API Route for moving a quiz to a folder
 router.patch(
     '/:id/move',
-    commonRules.quizRules.move,
-    validate,
-    QuizController.moveQuiz
+    async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { folderId } = req.body;
+            const userId = req.user?.userId;
+
+            // ย้ายข้อสอบใน database
+            await pool.execute(
+                'UPDATE quizzes SET folder_id = ?, updated_at = NOW() WHERE id = ?',
+                [folderId === "0" ? null : folderId, id]
+            );
+
+            return res.status(200).json({
+                success: true,
+                message: 'ย้ายข้อสอบเรียบร้อยแล้ว'
+            });
+        } catch (error) {
+            console.error('Error moving quiz:', error);
+            return res.status(500).json({
+                success: false,
+                message: 'เกิดข้อผิดพลาดในการย้ายข้อสอบ',
+                error: error.message
+            });
+        }
+    }
 );
 
 // API Route for checking title availability
