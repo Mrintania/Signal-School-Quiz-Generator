@@ -16,7 +16,7 @@ class ConfigService {
                 port: this._getEnv('PORT', 3001),
                 environment: this._getEnv('NODE_ENV', 'development'),
                 frontendUrl: this._getEnv('FRONTEND_URL', 'http://localhost:3000'),
-                skipAuth: this._getEnv('SKIP_AUTH', 'false') === 'true',
+                skipAuth: this._getEnv('SKIP_AUTH', 'true') === 'true', ///skip auth for development
                 logAuth: this._getEnv('LOG_AUTH', 'false') === 'true'
             },
 

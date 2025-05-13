@@ -59,7 +59,7 @@ Signal School Quiz Generator is an innovative educational technology platform de
 ### Quick Setup
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/signal-school-quiz-generator.git
+git clone https://github.com/mrintania/signal-school-quiz-generator.git
 
 # Setup Backend
 cd backend
