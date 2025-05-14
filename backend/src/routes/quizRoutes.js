@@ -5,7 +5,65 @@ import { commonRules, validate, sanitizeAll } from '../utils/validator.js';
 import { generalLimiter, aiGenerationLimiter } from '../middlewares/rateLimiter.js';
 import { authenticateToken } from '../middlewares/auth.js'; // Import authentication middleware
 
+import multer from 'multer';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import fs from 'fs';
+
+
 const router = express.Router();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const uploadsDir = path.join(__dirname, '../../../uploads/quiz-files');
+
+// Create uploads directory if it doesn't exist
+if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+// Configure multer storage
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, uploadsDir);
+    },
+    filename: function (req, file, cb) {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        const ext = path.extname(file.originalname);
+        cb(null, 'quiz-doc-' + uniqueSuffix + ext);
+    }
+});
+
+// Set up file filter
+const fileFilter = (req, file, cb) => {
+    // Accept only allowed document types
+    const allowedTypes = [
+        'application/pdf',                     // PDF
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // DOCX
+        'text/plain'                           // TXT
+    ];
+
+    if (allowedTypes.includes(file.mimetype)) {
+        cb(null, true);
+    } else {
+        cb(new Error('Unsupported file type. Only PDF, DOCX, and TXT files are allowed.'), false);
+    }
+};
+
+// Initialize multer upload
+const upload = multer({
+    storage: storage,
+    fileFilter: fileFilter,
+    limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+});
+
+// Add new route for file-based quiz generation
+router.post(
+    '/generate-from-file',
+    upload.single('quizFile'),
+    QuizController.generateQuizFromFile
+);
+
 
 // Apply sanitization middleware to all routes
 router.use(sanitizeAll);

@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
-import { Container, Row, Col, Form, Button, Spinner, Card, Nav, InputGroup } from 'react-bootstrap';
+// Updates for CreateQuizPage.js to add file upload functionality
+
+import React, { useState, useRef } from 'react';
+import { Container, Row, Col, Form, Button, Spinner, Card, Nav, InputGroup, Alert } from 'react-bootstrap';
 import { useNavigate, Link } from 'react-router-dom';
 import { quizService } from '../services/api';
 import { useQuizContext } from '../context/QuizContext';
@@ -8,11 +10,11 @@ import { sampleTopics, handleIdeasClick } from '../utils/ideas';
 const CreateQuizPage = () => {
   const navigate = useNavigate();
   const { setGeneratedQuiz, setLoading, loading, setError } = useQuizContext();
+  const fileInputRef = useRef(null);
 
   const handleIdeasButtonClick = () => {
     handleIdeasClick(setFormData, setActiveSource);
   };
-  
 
   // Input source tabs
   const [activeSource, setActiveSource] = useState('topic');
@@ -20,19 +22,31 @@ const CreateQuizPage = () => {
   // Form state
   const [formData, setFormData] = useState({
     topic: '',
-    text: '', // เพิ่ม state สำหรับข้อความในแท็บ Text
-    webpage: '', // เพิ่ม state สำหรับ URL เว็บไซต์
+    text: '',
+    webpage: '',
     questionType: 'Multiple Choice',
-    numberOfQuestions: '10', // เปลี่ยนค่าเริ่มต้นเป็น 10
+    numberOfQuestions: '10',
     additionalInstructions: '',
     studentLevel: '',
     language: 'thai'
   });
 
+  // File upload states
+  const [fileData, setFileData] = useState({
+    file: null,
+    fileName: '',
+    fileSize: 0,
+    fileType: '',
+    isUploading: false,
+    uploadProgress: 0,
+    isFileValid: true,
+    fileError: ''
+  });
+
   // Form validation state
   const [validated, setValidated] = useState(false);
 
-  // สำหรับแท็บ Webpage
+  // State for webpage loading
   const [isLoadingWebpage, setIsLoadingWebpage] = useState(false);
   const [webpageLoaded, setWebpageLoaded] = useState(false);
 
@@ -45,17 +59,143 @@ const CreateQuizPage = () => {
     }));
   };
 
-  // ฟังก์ชันโหลดเว็บเพจ (จำลองการโหลด)
+  // Handle file input change
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+
+    // Reset error state
+    let isFileValid = true;
+    let fileError = '';
+
+    // Validate file type
+    const allowedTypes = [
+      'application/pdf',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'text/plain'
+    ];
+
+    if (file && !allowedTypes.includes(file.type)) {
+      isFileValid = false;
+      fileError = 'Unsupported file type. Only PDF, DOCX, and TXT files are supported.';
+
+      // Clear file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+
+      setFileData({
+        file: null,
+        fileName: '',
+        fileSize: 0,
+        fileType: '',
+        isUploading: false,
+        uploadProgress: 0,
+        isFileValid: false,
+        fileError
+      });
+
+      return;
+    }
+
+    // Validate file size (10MB limit)
+    const maxSize = 10 * 1024 * 1024; // 10MB
+    if (file && file.size > maxSize) {
+      isFileValid = false;
+      fileError = 'File is too large. Maximum file size is 10MB.';
+
+      // Clear file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+
+      setFileData({
+        file: null,
+        fileName: '',
+        fileSize: 0,
+        fileType: '',
+        isUploading: false,
+        uploadProgress: 0,
+        isFileValid: false,
+        fileError
+      });
+
+      return;
+    }
+
+    // If file is valid, update state
+    if (file) {
+      setFileData({
+        file,
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type,
+        isUploading: false,
+        uploadProgress: 0,
+        isFileValid: true,
+        fileError: ''
+      });
+    } else {
+      setFileData({
+        file: null,
+        fileName: '',
+        fileSize: 0,
+        fileType: '',
+        isUploading: false,
+        uploadProgress: 0,
+        isFileValid: true,
+        fileError: ''
+      });
+    }
+  };
+
+  // Handle file drop
+  const handleFileDrop = (e) => {
+    e.preventDefault();
+
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const file = e.dataTransfer.files[0];
+
+      // Set file in file input for consistency
+      if (fileInputRef.current) {
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(file);
+        fileInputRef.current.files = dataTransfer.files;
+      }
+
+      // Process the file
+      handleFileChange({ target: { files: [file] } });
+    }
+  };
+
+  // Handle webpage loading (simulation)
   const handleLoadWebpage = () => {
     if (!formData.webpage) return;
 
     setIsLoadingWebpage(true);
 
-    // จำลองการโหลดเว็บเพจ (ในการใช้งานจริงควรมีการเรียก API)
+    // Simulated loading
     setTimeout(() => {
       setIsLoadingWebpage(false);
       setWebpageLoaded(true);
     }, 1500);
+  };
+
+  // Format bytes to human-readable format
+  const formatBytes = (bytes, decimals = 2) => {
+    if (bytes === 0) return '0 Bytes';
+
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+  };
+
+  // Handle drag events
+  const handleDragOver = (e) => {
+    e.preventDefault();
   };
 
   // Handle form submission
@@ -70,51 +210,115 @@ const CreateQuizPage = () => {
       return;
     }
 
+    // Validate based on active source
+    if (activeSource === 'file' && !fileData.file) {
+      setFileData(prev => ({
+        ...prev,
+        isFileValid: false,
+        fileError: 'Please select a file to generate quiz questions.'
+      }));
+      return;
+    }
+
     try {
       setLoading(true);
       setError(null);
 
-      // เตรียมข้อมูลตามแท็บที่เลือก
-      let dataToSend = { ...formData };
+      console.log(`Starting quiz generation from ${activeSource} source`);
 
-      // แก้ไขข้อมูลที่จะส่งไปตาม source ที่เลือก
-      if (activeSource === 'text' && formData.text) {
-        // ใช้ข้อความจากแท็บ Text เป็นเนื้อหาในการออกข้อสอบ
-        dataToSend.additionalInstructions =
-          `${dataToSend.additionalInstructions} Generate questions based on the following text content: ${formData.text}`;
+      let response;
 
-        if (!dataToSend.topic || dataToSend.topic.trim() === '') {
-          // ถ้าไม่มีหัวข้อ ให้ใช้ 'Text Content' เป็นหัวข้อ
-          dataToSend.topic = 'Text Content';
-        }
-      } else if (activeSource === 'webpage' && formData.webpage) {
-        // ใช้ URL เว็บไซต์เป็นเนื้อหาในการออกข้อสอบ
-        dataToSend.additionalInstructions =
-          `${dataToSend.additionalInstructions} Generate questions based on content from this webpage URL: ${formData.webpage}`;
-
-        if (!dataToSend.topic || dataToSend.topic.trim() === '') {
-          // ถ้าไม่มีหัวข้อ ให้ใช้ URL เป็นหัวข้อ
-          dataToSend.topic = `Webpage: ${formData.webpage}`;
-        }
-      }
-
-      // Call API to generate quiz
-      const response = await quizService.generateQuiz(dataToSend);
-
-      if (response.success) {
-        // Store generated quiz in context
-        setGeneratedQuiz({
-          ...response.data,
-          formData: dataToSend
+      // Handle different sources
+      if (activeSource === 'file') {
+        // แสดงข้อมูลไฟล์ที่เลือกสำหรับการดีบัก
+        console.log('File selected:', {
+          name: fileData.fileName,
+          size: fileData.fileSize,
+          type: fileData.fileType
         });
 
-        // Navigate to the result page
+        // สร้าง FormData สำหรับการอัปโหลดไฟล์
+        const formDataObj = new FormData();
+        formDataObj.append('quizFile', fileData.file);
+        formDataObj.append('questionType', formData.questionType);
+        formDataObj.append('numberOfQuestions', formData.numberOfQuestions);
+        formDataObj.append('studentLevel', formData.studentLevel || '');
+        formDataObj.append('language', formData.language || 'thai');
+        formDataObj.append('additionalInstructions', formData.additionalInstructions || '');
+
+        console.log('Uploading file and generating quiz...');
+
+        // ตรวจสอบว่าฟังก์ชัน generateQuizFromFile มีอยู่จริง
+        if (typeof quizService.generateQuizFromFile !== 'function') {
+          throw new Error('Function generateQuizFromFile is not implemented');
+        }
+
+        // อัปโหลดไฟล์และสร้างข้อสอบ
+        response = await quizService.generateQuizFromFile(formDataObj);
+        console.log('Quiz generation response:', response);
+      } else {
+        // เตรียมข้อมูลสำหรับแหล่งอื่นๆ
+        let dataToSend = { ...formData };
+
+        // ปรับข้อมูลตามประเภทแหล่ง
+        if (activeSource === 'text' && formData.text) {
+          dataToSend.additionalInstructions =
+            `${dataToSend.additionalInstructions} Generate questions based on the following text content: ${formData.text}`;
+
+          if (!dataToSend.topic || dataToSend.topic.trim() === '') {
+            dataToSend.topic = 'Text Content';
+          }
+        } else if (activeSource === 'webpage' && formData.webpage) {
+          dataToSend.additionalInstructions =
+            `${dataToSend.additionalInstructions} Generate questions based on content from this webpage URL: ${formData.webpage}`;
+
+          if (!dataToSend.topic || dataToSend.topic.trim() === '') {
+            dataToSend.topic = `Webpage: ${formData.webpage}`;
+          }
+        }
+
+        console.log('Generating quiz with data:', dataToSend);
+
+        // เรียก API เพื่อสร้างข้อสอบ
+        response = await quizService.generateQuiz(dataToSend);
+        console.log('Quiz generation response:', response);
+      }
+
+      if (response.success) {
+        // เก็บข้อสอบที่สร้างในคอนเท็กซ์
+        setGeneratedQuiz({
+          ...response.data,
+          formData
+        });
+
+        // นำทางไปยังหน้าผลลัพธ์
         navigate('/result');
       } else {
-        setError(response.message || 'Failed to generate quiz');
+        console.error('API returned success=false:', response.message);
+        setError(response.message || 'การสร้างข้อสอบล้มเหลว');
       }
     } catch (error) {
-      setError(error.response?.data?.message || 'An error occurred');
+      console.error('Error during quiz generation:', error);
+
+      // แสดงข้อความข้อผิดพลาดที่ชัดเจนยิ่งขึ้น
+      let errorMessage = 'เกิดข้อผิดพลาดในระหว่างการสร้างข้อสอบ';
+
+      if (error.response?.data?.message) {
+        errorMessage = error.response.data.message;
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+
+      setError(errorMessage);
+
+      // ในกรณีของการอัปโหลดไฟล์ ให้รีเซ็ตสถานะไฟล์หากมีข้อผิดพลาด
+      if (activeSource === 'file') {
+        setFileData(prev => ({
+          ...prev,
+          isFileValid: false,
+          fileError: errorMessage
+        }));
+      }
     } finally {
       setLoading(false);
     }
@@ -158,7 +362,7 @@ const CreateQuizPage = () => {
                 </p>
               </div>
 
-              {/* Input source tabs - UPDATED FOR BETTER VISIBILITY */}
+              {/* Input source tabs */}
               <Nav
                 variant="pills"
                 className="nav-justified bg-light p-2 rounded-pill mb-4"
@@ -206,7 +410,6 @@ const CreateQuizPage = () => {
                     <div className="d-flex align-items-center justify-content-center">
                       <span className="me-2">📁</span>
                       <span className={activeSource === 'file' ? 'fw-bold' : ''}>File</span>
-                      <span className="ms-2 text-warning" style={{ fontSize: '0.7rem' }}>👑</span>
                     </div>
                   </Nav.Link>
                 </Nav.Item>
@@ -233,7 +436,7 @@ const CreateQuizPage = () => {
                   </div>
                 )}
 
-                {/* Text input section - ทำให้ใช้งานได้จริง */}
+                {/* Text input section */}
                 {activeSource === 'text' && (
                   <div className="mb-4">
                     <Form.Control
@@ -255,7 +458,7 @@ const CreateQuizPage = () => {
                   </div>
                 )}
 
-                {/* Webpage input section - ทำให้ใช้งานได้จริง */}
+                {/* Webpage input section */}
                 {activeSource === 'webpage' && (
                   <div className="mb-4">
                     <InputGroup className="mb-2">
@@ -303,25 +506,90 @@ const CreateQuizPage = () => {
                   </div>
                 )}
 
-                {/* File input section - ยังเป็น feature ในอนาคต */}
+                {/* File input section - NOW FUNCTIONAL */}
                 {activeSource === 'file' && (
                   <div className="mb-4">
-                    <div className="border border-dashed border-light rounded p-5 text-center bg-light">
-                      <span className="d-block mb-3" style={{ fontSize: '2rem' }}>📁</span>
-                      <p className="mb-2">Drag and drop your file here, or click to browse</p>
-                      <small className="text-muted">Supported formats: PDF, DOCX, TXT (Coming soon)</small>
-                      <Form.Control
-                        type="file"
-                        className="d-none"
-                        disabled
-                      />
-                      <Button variant="outline-primary" className="mt-3" disabled>
-                        Browse Files
-                      </Button>
+                    <div
+                      className={`border rounded p-5 text-center ${fileData.isFileValid ? 'border-light bg-light' : 'border-danger bg-danger bg-opacity-10'}`}
+                      style={{ borderStyle: 'dashed' }}
+                      onDrop={handleFileDrop}
+                      onDragOver={handleDragOver}
+                    >
+                      {!fileData.file ? (
+                        <>
+                          <span className="d-block mb-3" style={{ fontSize: '2rem' }}>📁</span>
+                          <p className="mb-2">Drag and drop your file here, or click to browse</p>
+                          <small className="text-muted d-block mb-3">Supported formats: PDF, DOCX, TXT</small>
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            className="d-none"
+                            accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+                            onChange={handleFileChange}
+                          />
+                          <Button
+                            variant="outline-primary"
+                            onClick={() => fileInputRef.current?.click()}
+                          >
+                            Browse Files
+                          </Button>
+                        </>
+                      ) : (
+                        <div className="py-2">
+                          <div className="d-flex align-items-center justify-content-center mb-3">
+                            <span style={{ fontSize: '2rem' }}>
+                              {fileData.fileType === 'application/pdf' ? '📄' :
+                                fileData.fileType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ? '📝' :
+                                  '📄'}
+                            </span>
+                          </div>
+                          <h5>{fileData.fileName}</h5>
+                          <p className="text-muted mb-3">{formatBytes(fileData.fileSize)}</p>
+                          <div className="d-flex gap-2 justify-content-center">
+                            <Button
+                              variant="outline-secondary"
+                              size="sm"
+                              onClick={() => {
+                                setFileData({
+                                  file: null,
+                                  fileName: '',
+                                  fileSize: 0,
+                                  fileType: '',
+                                  isUploading: false,
+                                  uploadProgress: 0,
+                                  isFileValid: true,
+                                  fileError: ''
+                                });
+                                if (fileInputRef.current) {
+                                  fileInputRef.current.value = '';
+                                }
+                              }}
+                            >
+                              Remove
+                            </Button>
+                            <Button
+                              variant="outline-primary"
+                              size="sm"
+                              onClick={() => fileInputRef.current?.click()}
+                            >
+                              Change File
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    <p className="text-muted mt-2 small">
-                      This premium feature will be available soon. Please use Topic tab for now.
-                    </p>
+
+                    {/* File error message */}
+                    {!fileData.isFileValid && (
+                      <Alert variant="danger" className="mt-2">
+                        {fileData.fileError || 'There was a problem with the selected file.'}
+                      </Alert>
+                    )}
+
+                    <Form.Text className="text-muted mt-2">
+                      The AI will analyze the document and generate questions based on its content.
+                      Maximum file size: 10MB.
+                    </Form.Text>
                   </div>
                 )}
 

@@ -1,3 +1,4 @@
+// frontend/src/services/api.js
 import axios from 'axios';
 import adminService from './adminService';
 
@@ -36,6 +37,70 @@ const quizService = {
     } catch (error) {
       console.error('Error generating quiz:', error);
       throw error;
+    }
+  },
+
+  // Generate a quiz based on an uploaded document file
+  generateQuizFromFile: async (formData) => {
+    try {
+      console.log('Starting file upload with form data');
+      
+      // ดึงไฟล์จาก FormData เพื่อการตรวจสอบ
+      const file = formData.get('quizFile');
+      if (!file) {
+        console.error('No file in FormData object');
+        throw new Error('ไม่พบไฟล์ในข้อมูลฟอร์ม');
+      }
+      
+      console.log('File info:', {
+        name: file.name,
+        type: file.type,
+        size: file.size
+      });
+      
+      // แสดงพารามิเตอร์อื่นๆ จาก FormData
+      console.log('Form parameters:', {
+        questionType: formData.get('questionType'),
+        numberOfQuestions: formData.get('numberOfQuestions'),
+        studentLevel: formData.get('studentLevel'),
+        language: formData.get('language')
+      });
+      
+      const response = await api.post('/quizzes/generate-from-file', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        onUploadProgress: (progressEvent) => {
+          // คำนวณความคืบหน้าการอัปโหลด
+          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          console.log(`Upload progress: ${percentCompleted}%`);
+        },
+        // เพิ่มเวลาหมดเวลาที่นานขึ้นสำหรับไฟล์ขนาดใหญ่
+        timeout: 120000, // 2 นาที
+      });
+      
+      console.log('File upload completed, response:', response.data);
+      return response.data;
+    } catch (error) {
+      console.error('Error in file upload:', error);
+      
+      // จัดการข้อผิดพลาดให้ละเอียดยิ่งขึ้น
+      if (error.response) {
+        // ข้อผิดพลาดจากเซิร์ฟเวอร์ที่มีข้อมูลการตอบกลับ
+        console.error('Server responded with error:', {
+          status: error.response.status,
+          data: error.response.data
+        });
+        throw error;
+      } else if (error.request) {
+        // ข้อผิดพลาดในการส่งคำขอ (ไม่มีการตอบกลับ)
+        console.error('No response received from server');
+        throw new Error('ไม่ได้รับการตอบกลับจากเซิร์ฟเวอร์ โปรดลองอีกครั้งในภายหลัง');
+      } else {
+        // ข้อผิดพลาดในการตั้งค่าคำขอ
+        console.error('Error setting up request:', error.message);
+        throw error;
+      }
     }
   },
 

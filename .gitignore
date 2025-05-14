@@ -1,2 +1,5 @@
 .DS_Store
-.DS_Store
+/uploads/*/**.pdf
+/uploads/*/**.png
+/uploads/*/**.jpg
+/uploads/*/**.jpeg
