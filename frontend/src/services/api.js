@@ -41,76 +41,114 @@ const quizService = {
   },
 
   // Generate a quiz based on an uploaded document file
-  generateQuizFromFile: async (formData) => {
+  generateQuizFromFile: async (formData, onProgress) => {
     try {
       console.log('Starting file upload with form data');
-      
-      // ดึงไฟล์จาก FormData เพื่อการตรวจสอบ
+
+      // ตรวจสอบว่ามีไฟล์ใน FormData
       const file = formData.get('quizFile');
       if (!file) {
         console.error('No file in FormData object');
         throw new Error('ไม่พบไฟล์ในข้อมูลฟอร์ม');
       }
-      
+
       console.log('File info:', {
         name: file.name,
         type: file.type,
         size: file.size
       });
-      
-      // แสดงพารามิเตอร์อื่นๆ จาก FormData
-      console.log('Form parameters:', {
-        questionType: formData.get('questionType'),
-        numberOfQuestions: formData.get('numberOfQuestions'),
-        studentLevel: formData.get('studentLevel'),
-        language: formData.get('language')
-      });
-      
-      const response = await api.post('/quizzes/generate-from-file', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-        onUploadProgress: (progressEvent) => {
-          // คำนวณความคืบหน้าการอัปโหลด
-          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-          console.log(`Upload progress: ${percentCompleted}%`);
-        },
-        // เพิ่มเวลาหมดเวลาที่นานขึ้นสำหรับไฟล์ขนาดใหญ่
-        timeout: 120000, // 2 นาที
-      });
-      
-      console.log('File upload completed, response:', response.data);
-      return response.data;
+
+      // ตรวจสอบขนาดไฟล์ก่อนอัปโหลด (เพิ่มขั้นตอนนี้)
+      if (file.size > 10 * 1024 * 1024) { // 10MB
+        throw new Error('ไฟล์มีขนาดใหญ่เกินไป ขนาดไฟล์สูงสุดคือ 10MB');
+      }
+
+      // ฟังก์ชันสำหรับการติดตามความคืบหน้า
+      const onUploadProgress = (progressEvent) => {
+        const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+        console.log(`Upload progress: ${percentCompleted}%`);
+        if (onProgress && typeof onProgress === 'function') {
+          onProgress(percentCompleted);
+        }
+      };
+
+      // เพิ่มเวลารอ timeout
+      const timeout = Math.max(120000, file.size / 1024); // อย่างน้อย 2 นาที หรือมากกว่าสำหรับไฟล์ใหญ่
+
+      // ลองส่งคำขอสูงสุด 3 ครั้ง หากเจอ rate limit
+      let attempts = 0;
+      const maxAttempts = 3;
+      let lastError = null;
+
+      while (attempts < maxAttempts) {
+        try {
+          attempts++;
+
+          // ส่งคำขอไปยัง API
+          const response = await api.post('/quizzes/generate-from-file', formData, {
+            headers: {
+              'Content-Type': 'multipart/form-data',
+            },
+            onUploadProgress,
+            timeout,
+          });
+
+          if (response.status >= 200 && response.status < 300) {
+            console.log('File upload completed, response:', response.data);
+            return response.data;
+          } else {
+            throw new Error(`Server responded with status: ${response.status}`);
+          }
+        } catch (error) {
+          lastError = error;
+
+          // ตรวจสอบว่าเป็น rate limit error หรือไม่
+          if (error.response && error.response.status === 429) {
+            // เวลารอแบบ exponential backoff
+            const waitTime = Math.pow(2, attempts) * 1000; // 2, 4, 8 วินาที
+            console.warn(`Rate limit hit, waiting ${waitTime}ms before retry. Attempt ${attempts}/${maxAttempts}`);
+
+            // แสดงข้อความให้ผู้ใช้ทราบว่ากำลังรอ
+            if (onProgress && typeof onProgress === 'function') {
+              onProgress(-1, `เกินโควต้าการใช้งาน AI รอสักครู่... (${attempts}/${maxAttempts})`);
+            }
+
+            // รอตามเวลาที่กำหนด
+            await new Promise(resolve => setTimeout(resolve, waitTime));
+
+            // ลองใหม่อีกครั้ง
+            continue;
+          }
+
+          // หากไม่ใช่ rate limit error ให้โยนข้อผิดพลาดออกไปเลย
+          break;
+        }
+      }
+
+      // ไม่สามารถส่งคำขอได้สำเร็จหลังจากลองหลายครั้ง
+      console.error('Error in file upload after', maxAttempts, 'attempts:', lastError);
+
+      // จัดการข้อผิดพลาดตามประเภท
+      if (lastError.response) {
+        if (lastError.response.status === 429) {
+          throw new Error('เกินโควต้าการใช้งาน AI กรุณาลองใหม่ในภายหลัง (อาจต้องรอ 1-2 นาที)');
+        } else if (lastError.response.status === 413) {
+          throw new Error('ไฟล์มีขนาดใหญ่เกินไป ขนาดไฟล์สูงสุดคือ 10MB');
+        } else if (lastError.response.status === 415) {
+          throw new Error('รูปแบบไฟล์ไม่รองรับ กรุณาอัปโหลดไฟล์ PDF, DOCX หรือ TXT');
+        } else {
+          const serverMessage = lastError.response.data?.message;
+          throw new Error(serverMessage || `เกิดข้อผิดพลาด: รหัส ${lastError.response.status}`);
+        }
+      } else if (lastError.code === 'ECONNABORTED') {
+        throw new Error('การอัปโหลดหมดเวลา โปรดลองใช้ไฟล์ที่มีขนาดเล็กลง');
+      } else if (lastError.request) {
+        throw new Error('ไม่ได้รับการตอบกลับจากเซิร์ฟเวอร์ โปรดตรวจสอบการเชื่อมต่อและลองอีกครั้ง');
+      } else {
+        throw lastError;
+      }
     } catch (error) {
       console.error('Error in file upload:', error);
-      
-      // จัดการข้อผิดพลาดให้ละเอียดยิ่งขึ้น
-      if (error.response) {
-        // ข้อผิดพลาดจากเซิร์ฟเวอร์ที่มีข้อมูลการตอบกลับ
-        console.error('Server responded with error:', {
-          status: error.response.status,
-          data: error.response.data
-        });
-        throw error;
-      } else if (error.request) {
-        // ข้อผิดพลาดในการส่งคำขอ (ไม่มีการตอบกลับ)
-        console.error('No response received from server');
-        throw new Error('ไม่ได้รับการตอบกลับจากเซิร์ฟเวอร์ โปรดลองอีกครั้งในภายหลัง');
-      } else {
-        // ข้อผิดพลาดในการตั้งค่าคำขอ
-        console.error('Error setting up request:', error.message);
-        throw error;
-      }
-    }
-  },
-
-  // Save a quiz to the database
-  saveQuiz: async (data) => {
-    try {
-      const response = await api.post('/quizzes/save', data);
-      return response.data;
-    } catch (error) {
-      console.error('Error saving quiz:', error);
       throw error;
     }
   },
@@ -409,7 +447,7 @@ const dashboardService = {
       throw error;
     }
   },
-  
+
   // Get recent activities
   getRecentActivities: async () => {
     try {
@@ -420,7 +458,7 @@ const dashboardService = {
       throw error;
     }
   },
-  
+
   // Get system status (admin only)
   getSystemStatus: async () => {
     try {
@@ -434,9 +472,9 @@ const dashboardService = {
 };
 
 // Export services
-export { 
-  quizService, 
-  authService, 
+export {
+  quizService,
+  authService,
   userService,
   dashboardService,
   adminService

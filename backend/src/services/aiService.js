@@ -38,6 +38,50 @@ class AIService {
         return !!this.genAI;
     }
 
+    async _callGeminiWithRetry(model, parts, maxAttempts = 3, initialDelay = 2000) {
+        let attempt = 0;
+        let lastError = null;
+
+        while (attempt < maxAttempts) {
+            try {
+                attempt++;
+                logger.info(`AI API call attempt ${attempt}/${maxAttempts}`);
+
+                // ส่งคำขอไปยัง Gemini API
+                const result = await model.generateContent(parts);
+                return result;
+            } catch (error) {
+                lastError = error;
+
+                // ตรวจสอบว่าเป็น rate limit error หรือไม่
+                const isRateLimit =
+                    error.name === 'GoogleGenerativeAIError' ||
+                    (error.message && (
+                        error.message.includes('RESOURCE_EXHAUSTED') ||
+                        error.message.includes('quota') ||
+                        error.message.includes('rate limit') ||
+                        error.message.includes('429')
+                    ));
+
+                // ถ้าไม่ใช่ rate limit error ให้โยนข้อผิดพลาดออกไปเลย
+                if (!isRateLimit || attempt >= maxAttempts) {
+                    logger.error(`AI API call failed after ${attempt} attempts:`, error);
+                    throw error;
+                }
+
+                // คำนวณเวลารอแบบ exponential backoff
+                const delay = initialDelay * Math.pow(2, attempt - 1);
+                logger.warn(`Rate limit encountered, waiting ${delay}ms before retry`);
+
+                // รอก่อนลองใหม่
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+        }
+
+        // ไม่สามารถเรียก API สำเร็จหลังจากลองหลายครั้ง
+        throw lastError;
+    }
+
     /**
      * Generate a quiz based on parameters
      * @param {Object} params - Generation parameters
@@ -268,30 +312,32 @@ class AIService {
             language
         } = params;
 
-        logger.info(`Starting document processing for quiz generation: ${mimeType}, topic: ${topic}`);
-
-        // สร้างคำสั่งสำหรับ AI ที่รวมคำแนะนำในการดึงเนื้อหาจากเอกสาร
-        const prompt = this._createDocumentPrompt(
-            topic,
-            questionType,
-            numberOfQuestions,
-            additionalInstructions,
-            studentLevel,
-            language
-        );
+        logger.info(`Starting document processing for quiz generation: ${mimeType}, topic: ${topic}, size: ${Math.round(fileBase64.length / 1.37 / 1024)}KB`);
 
         try {
-            // เลือกโมเดลและตั้งค่าพารามิเตอร์
+            // สร้างคำสั่งสำหรับ AI
+            const prompt = this._createDocumentPrompt(
+                topic,
+                questionType,
+                numberOfQuestions,
+                additionalInstructions,
+                studentLevel,
+                language
+            );
+
+            // เลือกโมเดลและตั้งค่าพารามิเตอร์ - ทดลองใช้ทั้งสองโมเดล
+            const modelName = fileBase64.length > 1000000 ? "gemini-2.0-flash" : "Gemini 2.5 Flash Preview 04-17";
+            logger.info(`Using model: ${modelName} for document processing`);
+
             const model = this.genAI.getGenerativeModel({
-                model: "gemini-2.0-flash", // ใช้โมเดลล่าสุดที่มี
+                model: modelName,
                 generationConfig: {
-                    temperature: 1,
+                    temperature: 0.7,
                     maxOutputTokens: 8192,
                 },
             });
 
-            // สร้างส่วนไฟล์สำหรับเอกสาร
-            // นี่จะส่งเอกสารไปยัง Gemini โดยตรงโดยไม่ต้องทำ OCR ที่ฝั่งเรา
+            // สร้างส่วน file part
             const filePart = {
                 inlineData: {
                     data: fileBase64,
@@ -299,59 +345,91 @@ class AIService {
                 }
             };
 
-            // สร้างส่วนข้อความสำหรับคำสั่ง
+            // สร้างส่วน text part
             const textPart = {
                 text: prompt
             };
 
-            logger.debug('Sending document to Gemini API with prompt:', { prompt });
+            logger.debug('Sending document to Gemini API with prompt');
 
-            // ตั้งเวลาหมดเวลาสำหรับคำขอ (90 วินาทีสำหรับการประมวลผลเอกสาร)
+            // ตั้ง timeout สำหรับการเรียก API
             const timeoutPromise = new Promise((_, reject) => {
-                setTimeout(() => reject(new Error('AI generation timed out')), 90000);
+                setTimeout(() => reject(new Error('AI generation timed out')), 120000);
             });
 
-            // ส่งคำขอการสร้างพร้อมทั้งเอกสารและคำสั่ง
+            // เรียกใช้ API ด้วย retry logic
             logger.info('Calling Gemini API to process document...');
-            const generationPromise = model.generateContent([filePart, textPart]);
+            const generationPromise = this._callGeminiWithRetry(model, [filePart, textPart], 3, 2000);
             const result = await Promise.race([generationPromise, timeoutPromise]);
             const responseText = result.response.text();
 
-            logger.info('Received response from Gemini API, parsing response...');
+            // แยกวิเคราะห์การตอบกลับ
+            try {
+                const quizData = this._parseResponse(responseText);
 
-            // แยกวิเคราะห์การตอบสนอง
-            const quizData = this._parseResponse(responseText);
+                // ตรวจสอบโครงสร้างข้อมูล
+                if (!quizData.questions || !Array.isArray(quizData.questions)) {
+                    logger.error('Invalid quiz data structure, attempting fallback parsing...');
+                    throw new Error('Invalid structure');
+                }
 
-            // ตรวจสอบโครงสร้างการตอบสนอง
-            if (!quizData.questions || !Array.isArray(quizData.questions)) {
-                logger.error('Invalid quiz data structure from AI response:', responseText.substring(0, 500));
-                throw new Error('Invalid quiz data structure from AI response');
+                logger.info(`Successfully generated ${quizData.questions.length} questions from document`);
+
+                return {
+                    topic,
+                    questionType,
+                    studentLevel,
+                    language,
+                    questions: quizData.questions
+                };
+            } catch (parseError) {
+                // ใช้วิธีการแยกวิเคราะห์สำรองหากวิธีแรกล้มเหลว
+                logger.warn('JSON parsing failed, trying fallback extraction', parseError);
+
+                const jsonMatch = responseText.match(/\{[\s\S]*"questions"[\s\S]*\}/);
+                if (jsonMatch) {
+                    try {
+                        const extracted = jsonMatch[0];
+                        const fixedJson = this._sanitizeJsonString(extracted);
+                        const fallbackData = JSON.parse(fixedJson);
+
+                        if (fallbackData.questions && Array.isArray(fallbackData.questions)) {
+                            logger.info('Successfully parsed with fallback method');
+                            return {
+                                topic,
+                                questionType,
+                                studentLevel,
+                                language,
+                                questions: fallbackData.questions
+                            };
+                        }
+                    } catch (fallbackError) {
+                        logger.error('Fallback parsing also failed', fallbackError);
+                    }
+                }
+
+                // ทุกวิธีการแยกวิเคราะห์ล้มเหลว
+                throw new Error('Failed to parse AI response into valid quiz format');
             }
-
-            logger.info(`Successfully generated ${quizData.questions.length} questions from document`);
-
-            // ส่งคืนข้อมูลสุดท้าย
-            return {
-                topic,
-                questionType,
-                studentLevel,
-                language,
-                questions: quizData.questions
-            };
-
         } catch (error) {
             logger.error('Error generating quiz from document with AI:', error);
 
-            // เพิ่มข้อมูลเพิ่มเติมเกี่ยวกับข้อผิดพลาด
-            if (error.message === 'AI generation timed out') {
-                logger.error('Document processing timed out (90 seconds limit)');
-            } else if (error.message.includes('Invalid quiz data structure')) {
-                logger.error('Gemini API returned invalid format for quiz data');
-            } else {
-                logger.error(`Gemini API error: ${error.message}`);
+            // ตรวจสอบว่าเป็น rate limit error หรือไม่
+            if (error.name === 'GoogleGenerativeAIError' ||
+                (error.message && (
+                    error.message.includes('RESOURCE_EXHAUSTED') ||
+                    error.message.includes('quota') ||
+                    error.message.includes('rate limit')
+                ))) {
+                throw new Error('เกินโควต้าการใช้งาน API ของ Google Gemini กรุณาลองใหม่ในภายหลัง (ประมาณ 1-2 นาที)');
+            } else if (error.message === 'AI generation timed out') {
+                throw new Error('การประมวลผลเอกสารใช้เวลานานเกินไป กรุณาลองใช้เอกสารที่มีขนาดเล็กลงหรือลดจำนวนคำถาม');
+            } else if (error.message.includes('Invalid') || error.message.includes('parse') || error.message.includes('format')) {
+                throw new Error('AI ไม่สามารถประมวลผลเอกสารนี้ได้ กรุณาลองใช้เอกสารที่มีคุณภาพดีขึ้นหรือมีเนื้อหาที่ชัดเจนกว่านี้');
             }
 
-            throw error;
+            // ส่งต่อข้อผิดพลาดพร้อมข้อความที่เหมาะสม
+            throw new Error(`เกิดข้อผิดพลาดในการประมวลผลเอกสาร: ${error.message}`);
         }
     }
 
@@ -419,9 +497,27 @@ class AIService {
         }
 
         return prompt;
+    };
+    _sanitizeJsonString(jsonString) {
+        // Remove any text before the first opening brace
+        let sanitized = jsonString.substring(jsonString.indexOf('{'));
+
+        // Remove any text after the last closing brace
+        sanitized = sanitized.substring(0, sanitized.lastIndexOf('}') + 1);
+
+        // Fix common JSON formatting issues
+        sanitized = sanitized
+            .replace(/,\s*}/g, '}') // Remove trailing commas
+            .replace(/,\s*]/g, ']') // Remove trailing commas in arrays
+            .replace(/(['"])?([a-zA-Z0-9_]+)(['"])?:/g, '"$2":') // Ensure property names are quoted
+            .replace(/:\s*'/g, ': "') // Replace single quotes with double quotes for values
+            .replace(/'\s*,/g, '",') // Replace single quotes with double quotes for values
+            .replace(/'\s*}/g, '"}') // Replace single quotes with double quotes for values
+            .replace(/'\s*]/g, '"]'); // Replace single quotes with double quotes for values
+
+        return sanitized;
     }
 }
-
 // Create a singleton instance
 const aiService = new AIService();
 

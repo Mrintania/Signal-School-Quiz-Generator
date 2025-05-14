@@ -31,6 +31,14 @@ const CreateQuizPage = () => {
     language: 'thai'
   });
 
+  const [quotaInfo, setQuotaInfo] = useState({
+    isShowingQuotaInfo: false,
+    message: '',
+    isWaiting: false,
+    retryCount: 0,
+    maxRetries: 0
+  });
+
   // File upload states
   const [fileData, setFileData] = useState({
     file: null,
@@ -226,18 +234,27 @@ const CreateQuizPage = () => {
 
       console.log(`Starting quiz generation from ${activeSource} source`);
 
+      // Add loading state for file upload
+      if (activeSource === 'file') {
+        setFileData(prev => ({
+          ...prev,
+          isUploading: true,
+          uploadProgress: 0
+        }));
+      }
+
       let response;
 
       // Handle different sources
       if (activeSource === 'file') {
-        // แสดงข้อมูลไฟล์ที่เลือกสำหรับการดีบัก
+        // Show file info for debugging
         console.log('File selected:', {
           name: fileData.fileName,
           size: fileData.fileSize,
           type: fileData.fileType
         });
 
-        // สร้าง FormData สำหรับการอัปโหลดไฟล์
+        // Create FormData for file upload
         const formDataObj = new FormData();
         formDataObj.append('quizFile', fileData.file);
         formDataObj.append('questionType', formData.questionType);
@@ -248,19 +265,36 @@ const CreateQuizPage = () => {
 
         console.log('Uploading file and generating quiz...');
 
-        // ตรวจสอบว่าฟังก์ชัน generateQuizFromFile มีอยู่จริง
-        if (typeof quizService.generateQuizFromFile !== 'function') {
-          throw new Error('Function generateQuizFromFile is not implemented');
-        }
+        // Upload file and generate quiz with progress tracking
+        try {
+          // Set up progress tracking
+          const uploadTracker = (progressEvent) => {
+            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            setFileData(prev => ({
+              ...prev,
+              uploadProgress: percentCompleted
+            }));
+          };
 
-        // อัปโหลดไฟล์และสร้างข้อสอบ
-        response = await quizService.generateQuizFromFile(formDataObj);
-        console.log('Quiz generation response:', response);
+          // Call the service with progress tracking
+          response = await quizService.generateQuizFromFile(formDataObj, uploadTracker);
+          console.log('Quiz generation response:', response);
+        } catch (uploadError) {
+          // Reset upload state
+          setFileData(prev => ({
+            ...prev,
+            isUploading: false,
+            isFileValid: false,
+            fileError: uploadError.message || 'เกิดข้อผิดพลาดในการอัปโหลดไฟล์'
+          }));
+
+          throw uploadError; // Re-throw to be caught by outer error handler
+        }
       } else {
-        // เตรียมข้อมูลสำหรับแหล่งอื่นๆ
+        // Handle other source types (topic, text, webpage)
         let dataToSend = { ...formData };
 
-        // ปรับข้อมูลตามประเภทแหล่ง
+        // Adjust data based on source type
         if (activeSource === 'text' && formData.text) {
           dataToSend.additionalInstructions =
             `${dataToSend.additionalInstructions} Generate questions based on the following text content: ${formData.text}`;
@@ -279,28 +313,46 @@ const CreateQuizPage = () => {
 
         console.log('Generating quiz with data:', dataToSend);
 
-        // เรียก API เพื่อสร้างข้อสอบ
+        // Call API to generate quiz
         response = await quizService.generateQuiz(dataToSend);
         console.log('Quiz generation response:', response);
       }
 
       if (response.success) {
-        // เก็บข้อสอบที่สร้างในคอนเท็กซ์
+        // Store generated quiz in context
         setGeneratedQuiz({
           ...response.data,
           formData
         });
 
-        // นำทางไปยังหน้าผลลัพธ์
+        // Navigate to result page
         navigate('/result');
       } else {
         console.error('API returned success=false:', response.message);
         setError(response.message || 'การสร้างข้อสอบล้มเหลว');
+
+        // Update file data state for file uploads
+        if (activeSource === 'file') {
+          setFileData(prev => ({
+            ...prev,
+            isUploading: false,
+            isFileValid: false,
+            fileError: response.message || 'การสร้างข้อสอบจากไฟล์ล้มเหลว'
+          }));
+        }
       }
     } catch (error) {
       console.error('Error during quiz generation:', error);
 
-      // แสดงข้อความข้อผิดพลาดที่ชัดเจนยิ่งขึ้น
+      // Clear loading states
+      if (activeSource === 'file') {
+        setFileData(prev => ({
+          ...prev,
+          isUploading: false
+        }));
+      }
+
+      // Provide clear error message
       let errorMessage = 'เกิดข้อผิดพลาดในระหว่างการสร้างข้อสอบ';
 
       if (error.response?.data?.message) {
@@ -311,7 +363,7 @@ const CreateQuizPage = () => {
 
       setError(errorMessage);
 
-      // ในกรณีของการอัปโหลดไฟล์ ให้รีเซ็ตสถานะไฟล์หากมีข้อผิดพลาด
+      // For file uploads, update file state with error
       if (activeSource === 'file') {
         setFileData(prev => ({
           ...prev,
@@ -321,6 +373,14 @@ const CreateQuizPage = () => {
       }
     } finally {
       setLoading(false);
+
+      // Reset upload state
+      if (activeSource === 'file') {
+        setFileData(prev => ({
+          ...prev,
+          isUploading: false
+        }));
+      }
     }
   };
 
@@ -508,7 +568,7 @@ const CreateQuizPage = () => {
 
                 {/* File input section - NOW FUNCTIONAL */}
                 {activeSource === 'file' && (
-                  <div className="mb-4">
+                  <>
                     <div
                       className={`border rounded p-5 text-center ${fileData.isFileValid ? 'border-light bg-light' : 'border-danger bg-danger bg-opacity-10'}`}
                       style={{ borderStyle: 'dashed' }}
@@ -516,6 +576,7 @@ const CreateQuizPage = () => {
                       onDragOver={handleDragOver}
                     >
                       {!fileData.file ? (
+                        // File selection UI - No changes
                         <>
                           <span className="d-block mb-3" style={{ fontSize: '2rem' }}>📁</span>
                           <p className="mb-2">Drag and drop your file here, or click to browse</p>
@@ -534,7 +595,40 @@ const CreateQuizPage = () => {
                             Browse Files
                           </Button>
                         </>
+                      ) : fileData.isUploading ? (
+                        // File upload progress UI - New section
+                        <div className="py-3">
+                          <div className="d-flex align-items-center justify-content-center mb-3">
+                            <span style={{ fontSize: '2rem' }}>
+                              {fileData.fileType === 'application/pdf' ? '📄' :
+                                fileData.fileType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ? '📝' :
+                                  '📄'}
+                            </span>
+                          </div>
+                          <h5>{fileData.fileName}</h5>
+                          <p className="text-muted mb-3">{formatBytes(fileData.fileSize)}</p>
+
+                          {/* Progress bar */}
+                          <div className="progress mb-3" style={{ height: '20px' }}>
+                            <div
+                              className="progress-bar progress-bar-striped progress-bar-animated"
+                              role="progressbar"
+                              style={{ width: `${fileData.uploadProgress}%` }}
+                              aria-valuenow={fileData.uploadProgress}
+                              aria-valuemin="0"
+                              aria-valuemax="100"
+                            >
+                              {fileData.uploadProgress}%
+                            </div>
+                          </div>
+
+                          <p className="text-primary">
+                            <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                            กำลังประมวลผลไฟล์ โปรดรอสักครู่...
+                          </p>
+                        </div>
                       ) : (
+                        // Selected file UI - No changes
                         <div className="py-2">
                           <div className="d-flex align-items-center justify-content-center mb-3">
                             <span style={{ fontSize: '2rem' }}>
@@ -588,9 +682,42 @@ const CreateQuizPage = () => {
 
                     <Form.Text className="text-muted mt-2">
                       The AI will analyze the document and generate questions based on its content.
-                      Maximum file size: 10MB.
+                      Maximum file size: 10MB. Processing large documents may take a minute or more.
                     </Form.Text>
-                  </div>
+                    {/* เพิ่มส่วนแสดงข้อมูลโควต้า (เมื่อเกิดข้อผิดพลาด 429) */}
+                    {quotaInfo.isShowingQuotaInfo && (
+                      <Alert variant="warning" className="mt-2">
+                        <Alert.Heading>ข้อจำกัดการใช้งาน AI</Alert.Heading>
+                        <p>{quotaInfo.message || 'คุณกำลังเข้าใกล้ขีดจำกัดการใช้งาน AI โปรดรอสักครู่ก่อนลองใหม่อีกครั้ง'}</p>
+
+                        {quotaInfo.isWaiting && (
+                          <>
+                            <div className="d-flex align-items-center mb-2">
+                              <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                              <span>กำลังรอ... (ครั้งที่ {quotaInfo.retryCount}/{quotaInfo.maxRetries})</span>
+                            </div>
+                            <div className="progress mb-2" style={{ height: '10px' }}>
+                              <div
+                                className="progress-bar progress-bar-striped progress-bar-animated bg-warning"
+                                role="progressbar"
+                                style={{ width: `${(quotaInfo.retryCount / quotaInfo.maxRetries) * 100}%` }}
+                                aria-valuenow={quotaInfo.retryCount}
+                                aria-valuemin="0"
+                                aria-valuemax={quotaInfo.maxRetries}
+                              ></div>
+                            </div>
+                          </>
+                        )}
+
+                        <p className="mb-0">
+                          <small>
+                            Google Gemini API มีการจำกัดจำนวนคำขอที่สามารถทำได้ในระยะเวลาหนึ่งๆ
+                            {quotaInfo.isWaiting ? ' ระบบกำลังรอเพื่อลองใหม่โดยอัตโนมัติ' : ' คุณอาจต้องรอ 1-2 นาทีก่อนลองใหม่อีกครั้ง'}
+                          </small>
+                        </p>
+                      </Alert>
+                    )}
+                  </>
                 )}
 
                 {/* Quiz settings - displaying in a 2-column layout on wider screens */}

@@ -1590,6 +1590,54 @@ class QuizController {
       });
     }
   }
+
+  /**
+   * Check API quota for a user
+   * @param {string} userId - User ID to check quota for
+   * @returns {Object} Quota information
+   */
+  static async checkAPIQuota(userId) {
+    try {
+      // ถ้ามีระบบฐานข้อมูลสำหรับตรวจสอบโควต้า สามารถใช้ตรงนี้
+      // ตัวอย่าง: 
+      // const [quotaResult] = await pool.execute(
+      //   'SELECT ai_generation_count, ai_generation_limit FROM user_quotas WHERE user_id = ?',
+      //   [userId]
+      // );
+
+      // // ตรวจสอบว่าเกินโควต้าหรือไม่
+      // if (quotaResult.length > 0 && quotaResult[0].ai_generation_count >= quotaResult[0].ai_generation_limit) {
+      //   return { hasQuota: false, message: 'คุณได้ใช้โควต้า AI ของวันนี้หมดแล้ว กรุณาลองใหม่ในวันพรุ่งนี้' };
+      // }
+
+      // ถ้าไม่มีระบบฐานข้อมูล ให้ตรวจสอบจาก cache หรือ memory
+      // ตัวอย่างการใช้ cacheService:
+      const cacheKey = `ai_quota:${userId || 'anonymous'}:${new Date().toISOString().split('T')[0]}`;
+      const currentUsage = cacheService.get(cacheKey) || 0;
+      const quotaLimit = parseInt(process.env.DAILY_AI_QUOTA || 50);
+
+      if (currentUsage >= quotaLimit) {
+        return {
+          hasQuota: false,
+          message: 'คุณได้ใช้โควต้า AI ของวันนี้หมดแล้ว กรุณาลองใหม่ในวันพรุ่งนี้',
+          currentUsage,
+          limit: quotaLimit
+        };
+      }
+
+      // ยังมีโควต้าเหลือ
+      return {
+        hasQuota: true,
+        currentUsage,
+        limit: quotaLimit
+      };
+    } catch (error) {
+      logger.error('Error checking API quota:', error);
+      // กรณีเกิดข้อผิดพลาด ให้อนุญาตให้ใช้งานได้ (ป้องกันการบล็อกผู้ใช้โดยไม่จำเป็น)
+      return { hasQuota: true };
+    }
+  };
+
   /**
  * Generate a quiz from uploaded file
  * @param {Object} req - Express request object
@@ -1597,7 +1645,7 @@ class QuizController {
  */
   static async generateQuizFromFile(req, res) {
     try {
-      // เช็คว่ามีไฟล์ถูกอัปโหลดหรือไม่
+      // ตรวจสอบว่ามีไฟล์หรือไม่
       if (!req.file) {
         return res.status(400).json({
           success: false,
@@ -1605,8 +1653,31 @@ class QuizController {
         });
       }
 
-      // แสดงข้อมูลของไฟล์ที่อัปโหลด (สำหรับการดีบัก)
-      console.log('File uploaded:', {
+      // ตรวจสอบโควต้า API ของผู้ใช้
+      const userId = req.user?.userId;
+      const quotaCheck = await checkAPIQuota(userId);
+
+      if (!quotaCheck.hasQuota) {
+        // ลบไฟล์ชั่วคราวถ้าเกินโควต้า
+        try {
+          fs.unlinkSync(req.file.path);
+          logger.info(`Removed temp file due to quota limit: ${req.file.filename}`);
+        } catch (unlinkError) {
+          logger.error('Error removing temp file:', unlinkError);
+        }
+
+        return res.status(429).json({
+          success: false,
+          message: quotaCheck.message || 'เกินโควต้าการใช้งาน AI กรุณาลองใหม่ในภายหลัง',
+          quota: {
+            currentUsage: quotaCheck.currentUsage,
+            limit: quotaCheck.limit
+          }
+        });
+      }
+
+      // แสดงข้อมูลไฟล์
+      logger.info('File uploaded:', {
         filename: req.file.filename,
         originalname: req.file.originalname,
         mimetype: req.file.mimetype,
@@ -1614,7 +1685,7 @@ class QuizController {
         path: req.file.path
       });
 
-      // รับข้อมูลแบบฟอร์ม
+      // ดึงข้อมูลแบบฟอร์ม
       const {
         questionType = 'Multiple Choice',
         numberOfQuestions = '10',
@@ -1623,85 +1694,145 @@ class QuizController {
         language = 'thai'
       } = req.body;
 
-      console.log('Form data received:', {
-        questionType,
-        numberOfQuestions,
-        additionalInstructions,
-        studentLevel,
-        language
-      });
-
-      // สร้างชื่อหัวข้อจากชื่อไฟล์ (ลบนามสกุลออก)
+      // สร้างชื่อหัวข้อจากชื่อไฟล์
       const topic = req.file.originalname.replace(/\.[^/.]+$/, "");
 
-      // อ่านไฟล์เป็น buffer
-      const fileBuffer = fs.readFileSync(req.file.path);
+      try {
+        // อ่านไฟล์
+        const fileBuffer = fs.readFileSync(req.file.path);
 
-      // แปลงเป็น base64
-      const fileBase64 = fileBuffer.toString('base64');
+        // ตรวจสอบขนาดไฟล์
+        if (fileBuffer.length > 10 * 1024 * 1024) {
+          try {
+            fs.unlinkSync(req.file.path);
+          } catch (unlinkError) {
+            logger.error('Error removing oversized file:', unlinkError);
+          }
 
-      // กำหนด MIME type
-      const mimeType = req.file.mimetype;
+          return res.status(413).json({
+            success: false,
+            message: 'ไฟล์มีขนาดใหญ่เกินไป ขนาดไฟล์สูงสุดคือ 10MB'
+          });
+        }
 
-      // แสดงข้อความการเรียกใช้ AI service
-      console.log(`Calling AI service to generate quiz from ${mimeType} document`);
+        // แปลงเป็น base64
+        const fileBase64 = fileBuffer.toString('base64');
 
-      // สร้างข้อสอบจากเอกสาร
-      const quizData = await aiService.generateQuizFromDocument({
-        fileBase64,
-        mimeType,
-        topic,
-        questionType,
-        numberOfQuestions: parseInt(numberOfQuestions, 10),
-        additionalInstructions,
-        studentLevel,
-        language
-      });
+        // ตรวจสอบประเภทไฟล์
+        const mimeType = req.file.mimetype;
+        const allowedTypes = [
+          'application/pdf',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'text/plain'
+        ];
 
-      // ลบไฟล์ชั่วคราว
-      fs.unlinkSync(req.file.path);
-      console.log(`Temporary file ${req.file.filename} deleted`);
+        if (!allowedTypes.includes(mimeType)) {
+          try {
+            fs.unlinkSync(req.file.path);
+          } catch (unlinkError) {
+            logger.error('Error removing unsupported file:', unlinkError);
+          }
 
-      // ส่งผลลัพธ์กลับ
-      return res.status(200).json({
-        success: true,
-        data: quizData
-      });
+          return res.status(415).json({
+            success: false,
+            message: 'รูปแบบไฟล์ไม่รองรับ กรุณาอัปโหลดไฟล์ PDF, DOCX หรือ TXT'
+          });
+        }
+
+        // ตรวจสอบว่า AI service พร้อมใช้งานหรือไม่
+        if (!aiService.isAvailable()) {
+          try {
+            fs.unlinkSync(req.file.path);
+          } catch (unlinkError) {
+            logger.error('Error removing file when AI service unavailable:', unlinkError);
+          }
+
+          return res.status(503).json({
+            success: false,
+            message: 'บริการ AI ไม่พร้อมใช้งานในขณะนี้ กรุณาลองอีกครั้งในภายหลัง'
+          });
+        }
+
+        // เรียกใช้ AI service
+        const quizData = await aiService.generateQuizFromDocument({
+          fileBase64,
+          mimeType,
+          topic,
+          questionType,
+          numberOfQuestions: parseInt(numberOfQuestions, 10),
+          additionalInstructions,
+          studentLevel,
+          language
+        });
+
+        // อัปเดตการใช้โควต้า AI หลังจากใช้งานสำเร็จ
+        if (userId) {
+          const cacheKey = `ai_quota:${userId}:${new Date().toISOString().split('T')[0]}`;
+          const currentUsage = cacheService.get(cacheKey) || 0;
+          cacheService.set(cacheKey, currentUsage + 1, 24 * 60 * 60); // เก็บข้อมูล 24 ชั่วโมง
+        }
+
+        // ลบไฟล์ชั่วคราว
+        try {
+          fs.unlinkSync(req.file.path);
+          logger.info(`Temporary file ${req.file.filename} deleted after successful processing`);
+        } catch (unlinkError) {
+          logger.error('Error deleting temporary file:', unlinkError);
+        }
+
+        // ส่งผลลัพธ์กลับ
+        return res.status(200).json({
+          success: true,
+          data: quizData
+        });
+      } catch (aiError) {
+        // จัดการข้อผิดพลาดเฉพาะจาก AI service
+        logger.error('AI processing error:', aiError);
+
+        // ลบไฟล์ชั่วคราว
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch (unlinkError) {
+          logger.error('Error deleting temporary file after error:', unlinkError);
+        }
+
+        // ตรวจสอบประเภทข้อผิดพลาด
+        if (aiError.name === 'GoogleGenerativeAIError' ||
+          (aiError.message && aiError.message.includes('RESOURCE_EXHAUSTED'))) {
+          return res.status(429).json({
+            success: false,
+            message: 'เกินโควต้าการใช้งาน AI กรุณาลองใหม่ในภายหลัง'
+          });
+        } else if (aiError.message && aiError.message.includes('timed out')) {
+          return res.status(504).json({
+            success: false,
+            message: 'การประมวลผลเอกสารใช้เวลานานเกินไป กรุณาลองใช้เอกสารที่มีขนาดเล็กลงหรือลดจำนวนคำถาม'
+          });
+        }
+
+        // ข้อผิดพลาดทั่วไป
+        return res.status(500).json({
+          success: false,
+          message: 'เกิดข้อผิดพลาดในการประมวลผลเอกสาร: ' + (aiError.message || 'ไม่สามารถสร้างข้อสอบจากเอกสารนี้ได้'),
+        });
+      }
     } catch (error) {
-      console.error('Error in generateQuizFromFile:', error);
+      // จัดการข้อผิดพลาดทั่วไป
+      logger.error('Unhandled error in generateQuizFromFile:', error);
 
-      // จัดการกับการลบไฟล์ในกรณีที่เกิดข้อผิดพลาด
+      // ลบไฟล์ชั่วคราวในกรณีมีข้อผิดพลาด
       if (req.file && req.file.path) {
         try {
           fs.unlinkSync(req.file.path);
-          console.log(`Temporary file ${req.file.filename} deleted after error`);
         } catch (unlinkError) {
-          console.error('Error deleting temporary file:', unlinkError);
+          logger.error('Error deleting temporary file after error:', unlinkError);
         }
       }
 
-      // กำหนดข้อความและรหัสข้อผิดพลาดที่เหมาะสม
-      let statusCode = 500;
-      let errorMessage = 'เกิดข้อผิดพลาดในการสร้างข้อสอบจากไฟล์';
-
-      if (error.message && error.message.includes('File too large')) {
-        statusCode = 413; // Payload Too Large
-        errorMessage = 'ไฟล์มีขนาดใหญ่เกินไป ขนาดไฟล์สูงสุดคือ 10MB';
-      } else if (error.message && error.message.includes('Unsupported file type')) {
-        statusCode = 415; // Unsupported Media Type
-        errorMessage = 'รูปแบบไฟล์ไม่รองรับ กรุณาอัปโหลดไฟล์ PDF, DOCX หรือ TXT';
-      } else if (error.message === 'AI generation timed out') {
-        statusCode = 504; // Gateway Timeout
-        errorMessage = 'การสร้างข้อสอบหมดเวลา เอกสารอาจมีขนาดใหญ่หรือซับซ้อนเกินไป';
-      } else if (error.message === 'AI service is currently unavailable') {
-        statusCode = 503; // Service Unavailable
-        errorMessage = 'บริการ AI ไม่พร้อมใช้งานในขณะนี้ กรุณาลองอีกครั้งในภายหลัง';
-      }
-
-      return res.status(statusCode).json({
+      // ส่งข้อความผิดพลาดกลับ
+      return res.status(500).json({
         success: false,
-        message: errorMessage,
-        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        message: 'เกิดข้อผิดพลาดที่ไม่คาดคิดในระบบ กรุณาลองใหม่ภายหลัง'
       });
     }
   }
