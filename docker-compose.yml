@@ -1,0 +1,46 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: quiz-generator-frontend
+    restart: unless-stopped
+    networks:
+      - quiz-generator-network
+    depends_on:
+      - backend
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: quiz-generator-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./backend/logs:/app/logs
+      - ./backend/uploads:/app/uploads
+    networks:
+      - quiz-generator-network
+    depends_on:
+      - db
+
+  db:
+    image: mysql:8.0
+    container_name: quiz-generator-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - ./data/mysql:/var/lib/mysql
+      - ./database.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - quiz-generator-network
+
+networks:
+  quiz-generator-network:
+    driver: bridge

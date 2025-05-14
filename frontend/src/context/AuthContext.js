@@ -48,38 +48,38 @@ authApi.interceptors.response.use(
 
 export const AuthProvider = ({ children }) => {
   const [currentUser, setCurrentUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false); /// set true to show loading spinner
   const [error, setError] = useState(null);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(true); // set false to show login page
 
   // Check if user is logged in on mount
-  useEffect(() => {
-    const checkAuthStatus = async () => {
-      const token = localStorage.getItem('token');
-      if (!token) {
-        setLoading(false);
-        return;
-      }
+  // useEffect(() => {
+  //   const checkAuthStatus = async () => {
+  //     const token = localStorage.getItem('token');
+  //     if (!token) {
+  //       setLoading(false);
+  //       return;
+  //     }
 
-      try {
-        const response = await authApi.get('/auth/status');
-        if (response.data.success) {
-          const userResponse = await authApi.get('/users/profile');
-          if (userResponse.data.success) {
-            setCurrentUser(userResponse.data.data);
-            setIsAuthenticated(true);
-          }
-        }
-      } catch (error) {
-        console.error('Auth status check failed:', error);
-        localStorage.removeItem('token');
-      } finally {
-        setLoading(false);
-      }
-    };
+  //     try {
+  //       const response = await authApi.get('/auth/status');
+  //       if (response.data.success) {
+  //         const userResponse = await authApi.get('/users/profile');
+  //         if (userResponse.data.success) {
+  //           setCurrentUser(userResponse.data.data);
+  //           setIsAuthenticated(true);
+  //         }
+  //       }
+  //     } catch (error) {
+  //       console.error('Auth status check failed:', error);
+  //       localStorage.removeItem('token');
+  //     } finally {
+  //       setLoading(false);
+  //     }
+  //   };
 
-    checkAuthStatus();
-  }, []);
+  //   checkAuthStatus();
+  // }, []);
 
   // Register a new user
   const register = async (userData) => {
