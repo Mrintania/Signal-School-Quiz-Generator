@@ -9,9 +9,11 @@ export const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001/a
 const api = axios.create({
   baseURL: API_URL,
   headers: {
-    'Content-Type': 'application/json'
+    'Content-Type': 'application/json; charset=utf-8'
   }
 });
+
+
 
 // Add a request interceptor to add the auth token to all requests
 api.interceptors.request.use(
@@ -166,6 +168,43 @@ const quizService = {
     } catch (error) {
       console.error('File upload error:', error);
       throw error;
+    }
+  },
+
+  // บันทึกข้อสอบที่สร้าง
+  saveQuiz: async (quizData) => {
+    try {
+      // ตรวจสอบให้แน่ใจว่ามีข้อมูลที่จำเป็น
+      if (!quizData.title || !quizData.questions || quizData.questions.length === 0) {
+        throw new Error('Missing required quiz data');
+      }
+
+      console.log('Sending quiz data to API:', quizData);
+
+      // เพิ่ม timeout และส่งข้อมูล
+      const response = await api.post('/quizzes/save', quizData, {
+        timeout: 10000, // เพิ่ม timeout เป็น 10 วินาที
+        headers: {
+          'Content-Type': 'application/json; charset=UTF-8'
+        }
+      });
+
+      console.log('API response:', response.data);
+      return response.data;
+    } catch (error) {
+      console.error('Error saving quiz:', error);
+      if (error.response) {
+        // ดึงข้อความข้อผิดพลาดจาก response
+        console.error('API error response:', error.response.data);
+        throw error.response.data;
+      } else if (error.request) {
+        // ไม่ได้รับการตอบกลับจาก server
+        console.error('No response from server');
+        throw new Error('Server did not respond. Please check your connection.');
+      } else {
+        // เกิดข้อผิดพลาดอื่นๆ
+        throw error;
+      }
     }
   },
 

@@ -11,28 +11,28 @@ import QuizActionMenu from '../components/QuizActionMenu'; // Import the compone
 const QuizResultPage = () => {
   const navigate = useNavigate();
   const { generatedQuiz, setGeneratedQuiz, clearGeneratedQuiz, loading, setLoading, error, setError } = useQuizContext();
-  
+
   // State for modal
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [quizTitle, setQuizTitle] = useState('');
   const [validated, setValidated] = useState(false);
   const [savedQuiz, setSavedQuiz] = useState(null);
   const [showSuccessAlert, setShowSuccessAlert] = useState(false);
-  
+
   // State for the saved quiz to use with the action menu
   const [quizActionOptions, setQuizActionOptions] = useState({
     isVisible: false,
     quizId: null,
     quizTitle: '',
   });
-  
+
   // Check if we have a quiz to display
   useEffect(() => {
     if (!generatedQuiz) {
       navigate('/create');
     }
   }, [generatedQuiz, navigate]);
-  
+
   // Handle save modal
   const handleShowSaveModal = () => {
     // Use the topic as default title if none is set
@@ -41,53 +41,51 @@ const QuizResultPage = () => {
     }
     setShowSaveModal(true);
   };
-  
+
   const handleCloseSaveModal = () => {
     setShowSaveModal(false);
   };
-  
+
   // Handle save quiz
   const handleSaveQuiz = async (e) => {
     e.preventDefault();
-    
-    // Form validation
+
+    // ตรวจสอบฟอร์ม
     const form = e.currentTarget;
     if (form.checkValidity() === false) {
       e.stopPropagation();
       setValidated(true);
       return;
     }
-    
+
     try {
       setLoading(true);
-      
-      // Create quiz data object
+
+      // สร้างข้อมูลสำหรับบันทึก
       const quizData = {
         title: quizTitle,
         topic: generatedQuiz.topic,
         questionType: generatedQuiz.questionType,
         studentLevel: generatedQuiz.studentLevel,
-        questions: generatedQuiz.questions
+        questions: generatedQuiz.questions,
+        language: 'thai' // ระบุภาษาให้ชัดเจน
       };
-      
-      // Save quiz to API
+
+      console.log('Saving quiz data:', quizData); // เพิ่ม log เพื่อตรวจสอบ
+
+      // บันทึกข้อมูล
       const response = await quizService.saveQuiz(quizData);
-      
+
       if (response.success) {
-        // Close modal
         handleCloseSaveModal();
-        
-        // Set success message
         setShowSuccessAlert(true);
-        
-        // Save the quiz data for action menu
+
         setQuizActionOptions({
           isVisible: true,
           quizId: response.quizId,
           quizTitle: quizTitle
         });
-        
-        // Create simplified saved quiz object
+
         setSavedQuiz({
           id: response.quizId,
           title: quizTitle,
@@ -96,27 +94,31 @@ const QuizResultPage = () => {
           student_level: generatedQuiz.studentLevel,
           questions: generatedQuiz.questions
         });
-        
-        // Hide success alert after 5 seconds
+
         setTimeout(() => {
           setShowSuccessAlert(false);
         }, 5000);
       } else {
+        // แสดงข้อความข้อผิดพลาดที่ชัดเจนจาก API
         setError(response.message || 'Failed to save quiz');
+        console.error('API error:', response);
       }
     } catch (error) {
-      setError(error.response?.data?.message || 'An error occurred');
+      // เพิ่มรายละเอียดข้อผิดพลาด
+      console.error('Error saving quiz:', error);
+      setError(error.response?.data?.message || error.message || 'An unexpected error occurred');
     } finally {
       setLoading(false);
     }
   };
-  
+
+
   // Determine if Thai language based on content (simplified version)
   const isThai = generatedQuiz?.topic && /[\u0E00-\u0E7F]/.test(generatedQuiz.topic);
-  
+
   // Handlers for action menu callbacks
   const handleRenameSuccess = (newTitle) => {
-    setSavedQuiz({...savedQuiz, title: newTitle});
+    setSavedQuiz({ ...savedQuiz, title: newTitle });
     setShowSuccessAlert(true);
     setTimeout(() => {
       setShowSuccessAlert(false);
@@ -135,7 +137,7 @@ const QuizResultPage = () => {
       setShowSuccessAlert(false);
     }, 5000);
   };
-  
+
   // If no quiz data, show loading
   if (!generatedQuiz) {
     return (
@@ -144,7 +146,7 @@ const QuizResultPage = () => {
       </Container>
     );
   }
-  
+
   return (
     <Container className="py-4">
       {/* Success Message */}
@@ -153,14 +155,14 @@ const QuizResultPage = () => {
           {savedQuiz ? 'Quiz updated successfully!' : 'Quiz saved successfully!'}
         </Alert>
       )}
-      
+
       {/* Error Message */}
       {error && (
         <Alert variant="danger" onClose={() => setError(null)} dismissible>
           {error}
         </Alert>
       )}
-      
+
       {/* Header with quiz title and actions */}
       <Row className="mb-4">
         <Col>
@@ -168,9 +170,9 @@ const QuizResultPage = () => {
             <h2>
               {isThai ? 'ข้อสอบที่สร้าง:' : 'Generated Quiz:'} {generatedQuiz.topic}
             </h2>
-            
+
             {quizActionOptions.isVisible ? (
-              <QuizActionMenu 
+              <QuizActionMenu
                 quiz={savedQuiz}
                 onRenameSuccess={handleRenameSuccess}
                 onDeleteSuccess={handleDeleteSuccess}
@@ -178,9 +180,9 @@ const QuizResultPage = () => {
                 language={isThai ? 'thai' : 'english'}
               />
             ) : (
-              <Button 
-                variant="primary" 
-                size="lg" 
+              <Button
+                variant="primary"
+                size="lg"
                 onClick={handleShowSaveModal}
               >
                 <FaSave className="me-2" />
@@ -194,7 +196,7 @@ const QuizResultPage = () => {
           </p>
         </Col>
       </Row>
-      
+
       {/* Questions List */}
       {generatedQuiz.questions.map((question, questionIndex) => (
         <Card key={questionIndex} className="mb-4 shadow-sm">
@@ -203,7 +205,7 @@ const QuizResultPage = () => {
           </Card.Header>
           <Card.Body>
             <p className="h5 mb-4">{question.questionText}</p>
-            
+
             {/* Multiple Choice Options */}
             {generatedQuiz.questionType === 'Multiple Choice' && (
               <div className="mb-4">
@@ -220,7 +222,7 @@ const QuizResultPage = () => {
                 })}
               </div>
             )}
-            
+
             {/* Explanation */}
             <Card className="bg-light">
               <Card.Body>
@@ -231,22 +233,22 @@ const QuizResultPage = () => {
           </Card.Body>
         </Card>
       ))}
-      
+
       {/* Action Buttons */}
       <Row className="mt-4 mb-5">
         <Col md={6} className="d-grid mb-3 mb-md-0">
           {quizActionOptions.isVisible ? (
-            <Button 
-              variant="outline-primary" 
-              size="lg" 
+            <Button
+              variant="outline-primary"
+              size="lg"
               onClick={() => navigate(`/view/${savedQuiz.id}`)}
             >
               {isThai ? 'ดูข้อสอบที่บันทึกแล้ว' : 'View Saved Quiz'}
             </Button>
           ) : (
-            <Button 
-              variant="primary" 
-              size="lg" 
+            <Button
+              variant="primary"
+              size="lg"
               onClick={handleShowSaveModal}
             >
               <FaSave className="me-2" />
@@ -255,9 +257,9 @@ const QuizResultPage = () => {
           )}
         </Col>
         <Col md={6} className="d-grid">
-          <Button 
-            variant="outline-primary" 
-            size="lg" 
+          <Button
+            variant="outline-primary"
+            size="lg"
             onClick={() => navigate('/create')}
           >
             <FaPlus className="me-2" />
@@ -265,7 +267,7 @@ const QuizResultPage = () => {
           </Button>
         </Col>
       </Row>
-      
+
       {/* Save Modal */}
       <Modal show={showSaveModal} onHide={handleCloseSaveModal} centered>
         <Modal.Header closeButton>
