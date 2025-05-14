@@ -22,39 +22,59 @@ if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-// Configure multer storage
+// Create uploads directory if it doesn't exist
+if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true, mode: 0o755 }); // Set proper permissions
+}
+
+// Configure multer storage with better error handling
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
-        cb(null, uploadsDir);
+        // Verify directory exists before saving
+        if (!fs.existsSync(uploadsDir)) {
+            return cb(new Error('Upload directory does not exist'), null);
+        }
+        // Check if directory is writable
+        try {
+            fs.accessSync(uploadsDir, fs.constants.W_OK);
+            cb(null, uploadsDir);
+        } catch (err) {
+            cb(new Error('Upload directory is not writable'), null);
+        }
     },
     filename: function (req, file, cb) {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        const ext = path.extname(file.originalname);
-        cb(null, 'quiz-doc-' + uniqueSuffix + ext);
+        const ext = path.extname(file.originalname) || '.tmp';
+        const sanitizedFilename = 'quiz-doc-' + uniqueSuffix + ext;
+        cb(null, sanitizedFilename);
     }
 });
 
-// Set up file filter
+// Improve file filter for better validation
 const fileFilter = (req, file, cb) => {
     // Accept only allowed document types
     const allowedTypes = [
-        'application/pdf',                     // PDF
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // DOCX
-        'text/plain'                           // TXT
+        'application/pdf',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'text/plain'
     ];
 
+    // Check if MIME type is valid
     if (allowedTypes.includes(file.mimetype)) {
         cb(null, true);
     } else {
-        cb(new Error('Unsupported file type. Only PDF, DOCX, and TXT files are allowed.'), false);
+        cb(new Error(`Unsupported file type: ${file.mimetype}. Only PDF, DOCX, and TXT files are allowed.`), false);
     }
 };
 
-// Initialize multer upload
+// Initialize multer upload with better error handling
 const upload = multer({
     storage: storage,
     fileFilter: fileFilter,
-    limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+    limits: {
+        fileSize: 10 * 1024 * 1024, // 10MB limit
+        files: 1  // Only one file at a time
+    }
 });
 
 // Add new route for file-based quiz generation

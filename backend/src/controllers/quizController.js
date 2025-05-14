@@ -1645,38 +1645,15 @@ class QuizController {
  */
   static async generateQuizFromFile(req, res) {
     try {
-      // ตรวจสอบว่ามีไฟล์หรือไม่
+      // Check if file exists
       if (!req.file) {
+        logger.error('No file found in request');
         return res.status(400).json({
           success: false,
-          message: 'ไม่พบไฟล์ที่อัปโหลด กรุณาเลือกไฟล์'
+          message: 'No file uploaded. Please select a file.'
         });
       }
 
-      // ตรวจสอบโควต้า API ของผู้ใช้
-      const userId = req.user?.userId;
-      const quotaCheck = await checkAPIQuota(userId);
-
-      if (!quotaCheck.hasQuota) {
-        // ลบไฟล์ชั่วคราวถ้าเกินโควต้า
-        try {
-          fs.unlinkSync(req.file.path);
-          logger.info(`Removed temp file due to quota limit: ${req.file.filename}`);
-        } catch (unlinkError) {
-          logger.error('Error removing temp file:', unlinkError);
-        }
-
-        return res.status(429).json({
-          success: false,
-          message: quotaCheck.message || 'เกินโควต้าการใช้งาน AI กรุณาลองใหม่ในภายหลัง',
-          quota: {
-            currentUsage: quotaCheck.currentUsage,
-            limit: quotaCheck.limit
-          }
-        });
-      }
-
-      // แสดงข้อมูลไฟล์
       logger.info('File uploaded:', {
         filename: req.file.filename,
         originalname: req.file.originalname,
@@ -1685,7 +1662,7 @@ class QuizController {
         path: req.file.path
       });
 
-      // ดึงข้อมูลแบบฟอร์ม
+      // Get form data
       const {
         questionType = 'Multiple Choice',
         numberOfQuestions = '10',
@@ -1694,31 +1671,43 @@ class QuizController {
         language = 'thai'
       } = req.body;
 
-      // สร้างชื่อหัวข้อจากชื่อไฟล์
+      // Generate topic from filename
       const topic = req.file.originalname.replace(/\.[^/.]+$/, "");
 
       try {
-        // อ่านไฟล์
-        const fileBuffer = fs.readFileSync(req.file.path);
+        // Read file - safer file reading with proper error handling
+        let fileBuffer;
+        try {
+          fileBuffer = fs.readFileSync(req.file.path);
+          logger.info(`Successfully read file: ${req.file.path}, size: ${fileBuffer.length} bytes`);
+        } catch (readError) {
+          logger.error(`Error reading file: ${req.file.path}`, readError);
+          return res.status(500).json({
+            success: false,
+            message: 'Error reading uploaded file. Please try again.'
+          });
+        }
 
-        // ตรวจสอบขนาดไฟล์
+        // Check file size
         if (fileBuffer.length > 10 * 1024 * 1024) {
           try {
             fs.unlinkSync(req.file.path);
+            logger.info(`Deleted oversized file: ${req.file.path}`);
           } catch (unlinkError) {
             logger.error('Error removing oversized file:', unlinkError);
           }
 
           return res.status(413).json({
             success: false,
-            message: 'ไฟล์มีขนาดใหญ่เกินไป ขนาดไฟล์สูงสุดคือ 10MB'
+            message: 'File too large. Maximum file size is 10MB.'
           });
         }
 
-        // แปลงเป็น base64
+        // Convert to base64
         const fileBase64 = fileBuffer.toString('base64');
+        logger.info(`Converted file to base64, length: ${fileBase64.length}`);
 
-        // ตรวจสอบประเภทไฟล์
+        // Validate file type
         const mimeType = req.file.mimetype;
         const allowedTypes = [
           'application/pdf',
@@ -1729,18 +1718,20 @@ class QuizController {
         if (!allowedTypes.includes(mimeType)) {
           try {
             fs.unlinkSync(req.file.path);
+            logger.info(`Deleted unsupported file: ${req.file.path}`);
           } catch (unlinkError) {
             logger.error('Error removing unsupported file:', unlinkError);
           }
 
           return res.status(415).json({
             success: false,
-            message: 'รูปแบบไฟล์ไม่รองรับ กรุณาอัปโหลดไฟล์ PDF, DOCX หรือ TXT'
+            message: 'Unsupported file type. Only PDF, DOCX, and TXT files are supported.'
           });
         }
 
-        // ตรวจสอบว่า AI service พร้อมใช้งานหรือไม่
+        // Check if AI service is available
         if (!aiService.isAvailable()) {
+          logger.error('AI service not available');
           try {
             fs.unlinkSync(req.file.path);
           } catch (unlinkError) {
@@ -1749,11 +1740,12 @@ class QuizController {
 
           return res.status(503).json({
             success: false,
-            message: 'บริการ AI ไม่พร้อมใช้งานในขณะนี้ กรุณาลองอีกครั้งในภายหลัง'
+            message: 'AI service is currently unavailable. Please try again later.'
           });
         }
 
-        // เรียกใช้ AI service
+        // Call AI service with proper error handling
+        logger.info('Calling AI service to process document');
         const quizData = await aiService.generateQuizFromDocument({
           fileBase64,
           mimeType,
@@ -1765,14 +1757,7 @@ class QuizController {
           language
         });
 
-        // อัปเดตการใช้โควต้า AI หลังจากใช้งานสำเร็จ
-        if (userId) {
-          const cacheKey = `ai_quota:${userId}:${new Date().toISOString().split('T')[0]}`;
-          const currentUsage = cacheService.get(cacheKey) || 0;
-          cacheService.set(cacheKey, currentUsage + 1, 24 * 60 * 60); // เก็บข้อมูล 24 ชั่วโมง
-        }
-
-        // ลบไฟล์ชั่วคราว
+        // Clean up temporary file after processing
         try {
           fs.unlinkSync(req.file.path);
           logger.info(`Temporary file ${req.file.filename} deleted after successful processing`);
@@ -1780,59 +1765,61 @@ class QuizController {
           logger.error('Error deleting temporary file:', unlinkError);
         }
 
-        // ส่งผลลัพธ์กลับ
+        // Return success response
         return res.status(200).json({
           success: true,
           data: quizData
         });
       } catch (aiError) {
-        // จัดการข้อผิดพลาดเฉพาะจาก AI service
+        // Handle AI service errors
         logger.error('AI processing error:', aiError);
 
-        // ลบไฟล์ชั่วคราว
+        // Clean up temporary file
         try {
           fs.unlinkSync(req.file.path);
+          logger.info(`Temporary file deleted after error: ${req.file.path}`);
         } catch (unlinkError) {
           logger.error('Error deleting temporary file after error:', unlinkError);
         }
 
-        // ตรวจสอบประเภทข้อผิดพลาด
+        // Determine appropriate error response based on error type
         if (aiError.name === 'GoogleGenerativeAIError' ||
           (aiError.message && aiError.message.includes('RESOURCE_EXHAUSTED'))) {
           return res.status(429).json({
             success: false,
-            message: 'เกินโควต้าการใช้งาน AI กรุณาลองใหม่ในภายหลัง'
+            message: 'AI quota exceeded. Please try again later.'
           });
         } else if (aiError.message && aiError.message.includes('timed out')) {
           return res.status(504).json({
             success: false,
-            message: 'การประมวลผลเอกสารใช้เวลานานเกินไป กรุณาลองใช้เอกสารที่มีขนาดเล็กลงหรือลดจำนวนคำถาม'
+            message: 'Processing the document took too long. Please try with a smaller document or fewer questions.'
           });
         }
 
-        // ข้อผิดพลาดทั่วไป
+        // General error
         return res.status(500).json({
           success: false,
-          message: 'เกิดข้อผิดพลาดในการประมวลผลเอกสาร: ' + (aiError.message || 'ไม่สามารถสร้างข้อสอบจากเอกสารนี้ได้'),
+          message: 'Error processing document: ' + (aiError.message || 'Unable to generate quiz from this document'),
         });
       }
     } catch (error) {
-      // จัดการข้อผิดพลาดทั่วไป
+      // Handle general errors
       logger.error('Unhandled error in generateQuizFromFile:', error);
 
-      // ลบไฟล์ชั่วคราวในกรณีมีข้อผิดพลาด
+      // Clean up temporary file if it exists
       if (req.file && req.file.path) {
         try {
           fs.unlinkSync(req.file.path);
+          logger.info(`Temporary file deleted after error: ${req.file.path}`);
         } catch (unlinkError) {
           logger.error('Error deleting temporary file after error:', unlinkError);
         }
       }
 
-      // ส่งข้อความผิดพลาดกลับ
+      // Send appropriate error response
       return res.status(500).json({
         success: false,
-        message: 'เกิดข้อผิดพลาดที่ไม่คาดคิดในระบบ กรุณาลองใหม่ภายหลัง'
+        message: 'An unexpected error occurred. Please try again later.'
       });
     }
   }

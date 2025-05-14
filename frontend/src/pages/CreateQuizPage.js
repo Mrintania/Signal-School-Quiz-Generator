@@ -345,6 +345,7 @@ const CreateQuizPage = () => {
       console.error('Error during quiz generation:', error);
 
       // Clear loading states
+      setLoading(false);
       if (activeSource === 'file') {
         setFileData(prev => ({
           ...prev,
@@ -352,11 +353,37 @@ const CreateQuizPage = () => {
         }));
       }
 
-      // Provide clear error message
+      // Improved error message handling
       let errorMessage = 'เกิดข้อผิดพลาดในระหว่างการสร้างข้อสอบ';
 
-      if (error.response?.data?.message) {
-        errorMessage = error.response.data.message;
+      // Handle different error scenarios
+      if (error.response) {
+        // Handle HTTP error responses
+        const status = error.response.status;
+        const serverMessage = error.response.data?.message;
+
+        if (status === 429) {
+          errorMessage = 'เกินโควต้าการใช้งาน AI กรุณาลองใหม่ในภายหลัง (1-2 นาที)';
+
+          // Show quota info alert
+          setQuotaInfo({
+            isShowingQuotaInfo: true,
+            message: serverMessage || 'คุณได้ใช้โควต้า AI เกินกำหนด กรุณารอสักครู่ก่อนลองใหม่',
+            isWaiting: false,
+            retryCount: 0,
+            maxRetries: 3
+          });
+        } else if (status === 413) {
+          errorMessage = 'ไฟล์มีขนาดใหญ่เกินไป (ขนาดสูงสุด 10MB)';
+        } else if (status === 415) {
+          errorMessage = 'รูปแบบไฟล์ไม่รองรับ กรุณาใช้ไฟล์ PDF, DOCX หรือ TXT';
+        } else if (status === 503 || status === 504) {
+          errorMessage = 'บริการประมวลผลไม่พร้อมใช้งานชั่วคราว กรุณาลองใหม่ในภายหลัง';
+        } else if (serverMessage) {
+          errorMessage = serverMessage;
+        }
+      } else if (error.code === 'ECONNABORTED') {
+        errorMessage = 'การเชื่อมต่อกับเซิร์ฟเวอร์หมดเวลา กรุณาลองใหม่ภายหลัง';
       } else if (error.message) {
         errorMessage = error.message;
       }

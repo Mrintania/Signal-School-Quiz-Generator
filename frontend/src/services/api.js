@@ -45,11 +45,11 @@ const quizService = {
     try {
       console.log('Starting file upload with form data');
 
-      // ตรวจสอบว่ามีไฟล์ใน FormData
+      // Check if there's a file in FormData
       const file = formData.get('quizFile');
       if (!file) {
         console.error('No file in FormData object');
-        throw new Error('ไม่พบไฟล์ในข้อมูลฟอร์ม');
+        throw new Error('No file found in form data');
       }
 
       console.log('File info:', {
@@ -58,12 +58,23 @@ const quizService = {
         size: file.size
       });
 
-      // ตรวจสอบขนาดไฟล์ก่อนอัปโหลด (เพิ่มขั้นตอนนี้)
+      // Client-side file validation
       if (file.size > 10 * 1024 * 1024) { // 10MB
-        throw new Error('ไฟล์มีขนาดใหญ่เกินไป ขนาดไฟล์สูงสุดคือ 10MB');
+        throw new Error('File too large. Maximum file size is 10MB');
       }
 
-      // ฟังก์ชันสำหรับการติดตามความคืบหน้า
+      // Check file type
+      const validTypes = [
+        'application/pdf',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'text/plain'
+      ];
+
+      if (!validTypes.includes(file.type)) {
+        throw new Error('Unsupported file type. Only PDF, DOCX, and TXT files are supported.');
+      }
+
+      // Monitor upload progress
       const onUploadProgress = (progressEvent) => {
         const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
         console.log(`Upload progress: ${percentCompleted}%`);
@@ -72,10 +83,10 @@ const quizService = {
         }
       };
 
-      // เพิ่มเวลารอ timeout
-      const timeout = Math.max(120000, file.size / 1024); // อย่างน้อย 2 นาที หรือมากกว่าสำหรับไฟล์ใหญ่
+      // Adjust timeout based on file size
+      const timeout = Math.max(120000, file.size / 5); // At least 2 minutes, more for larger files
 
-      // ลองส่งคำขอสูงสุด 3 ครั้ง หากเจอ rate limit
+      // Make API request with proper retry handling
       let attempts = 0;
       const maxAttempts = 3;
       let lastError = null;
@@ -83,8 +94,9 @@ const quizService = {
       while (attempts < maxAttempts) {
         try {
           attempts++;
+          console.log(`Upload attempt ${attempts}/${maxAttempts}`);
 
-          // ส่งคำขอไปยัง API
+          // Send API request
           const response = await api.post('/quizzes/generate-from-file', formData, {
             headers: {
               'Content-Type': 'multipart/form-data',
@@ -93,62 +105,66 @@ const quizService = {
             timeout,
           });
 
-          if (response.status >= 200 && response.status < 300) {
-            console.log('File upload completed, response:', response.data);
-            return response.data;
-          } else {
-            throw new Error(`Server responded with status: ${response.status}`);
-          }
+          // Handle successful response
+          console.log('File upload completed successfully, response:', response.data);
+          return response.data;
         } catch (error) {
           lastError = error;
+          console.error(`Upload attempt ${attempts} failed:`, error);
 
-          // ตรวจสอบว่าเป็น rate limit error หรือไม่
-          if (error.response && error.response.status === 429) {
-            // เวลารอแบบ exponential backoff
-            const waitTime = Math.pow(2, attempts) * 1000; // 2, 4, 8 วินาที
-            console.warn(`Rate limit hit, waiting ${waitTime}ms before retry. Attempt ${attempts}/${maxAttempts}`);
+          // Check if it's worth retrying (rate limiting or temporary error)
+          if (error.response && (error.response.status === 429 || error.response.status === 503)) {
+            const waitTime = Math.pow(2, attempts) * 1000; // Exponential backoff
+            console.warn(`Rate limit or service unavailable, waiting ${waitTime}ms before retry`);
 
-            // แสดงข้อความให้ผู้ใช้ทราบว่ากำลังรอ
+            // Inform user about retry
             if (onProgress && typeof onProgress === 'function') {
-              onProgress(-1, `เกินโควต้าการใช้งาน AI รอสักครู่... (${attempts}/${maxAttempts})`);
+              onProgress(-1, `Service busy, retrying in ${waitTime / 1000} seconds... (${attempts}/${maxAttempts})`);
             }
 
-            // รอตามเวลาที่กำหนด
+            // Wait before next attempt
             await new Promise(resolve => setTimeout(resolve, waitTime));
-
-            // ลองใหม่อีกครั้ง
             continue;
           }
 
-          // หากไม่ใช่ rate limit error ให้โยนข้อผิดพลาดออกไปเลย
+          // For other errors, break and throw
           break;
         }
       }
 
-      // ไม่สามารถส่งคำขอได้สำเร็จหลังจากลองหลายครั้ง
+      // Error handling if all attempts failed
       console.error('Error in file upload after', maxAttempts, 'attempts:', lastError);
 
-      // จัดการข้อผิดพลาดตามประเภท
+      // Determine appropriate error message
       if (lastError.response) {
-        if (lastError.response.status === 429) {
-          throw new Error('เกินโควต้าการใช้งาน AI กรุณาลองใหม่ในภายหลัง (อาจต้องรอ 1-2 นาที)');
-        } else if (lastError.response.status === 413) {
-          throw new Error('ไฟล์มีขนาดใหญ่เกินไป ขนาดไฟล์สูงสุดคือ 10MB');
-        } else if (lastError.response.status === 415) {
-          throw new Error('รูปแบบไฟล์ไม่รองรับ กรุณาอัปโหลดไฟล์ PDF, DOCX หรือ TXT');
-        } else {
-          const serverMessage = lastError.response.data?.message;
-          throw new Error(serverMessage || `เกิดข้อผิดพลาด: รหัส ${lastError.response.status}`);
+        // Handle different HTTP error status codes
+        switch (lastError.response.status) {
+          case 400:
+            throw new Error(lastError.response.data?.message || 'Invalid request. Please check your file.');
+          case 413:
+            throw new Error('File too large. Maximum file size is 10MB.');
+          case 415:
+            throw new Error('Unsupported file type. Only PDF, DOCX, and TXT files are supported.');
+          case 429:
+            throw new Error('Too many requests. Please try again later.');
+          case 500:
+            throw new Error('Server error processing your file. Please try again.');
+          case 503:
+            throw new Error('Service temporarily unavailable. Please try again later.');
+          case 504:
+            throw new Error('Request timed out. Please try with a smaller file.');
+          default:
+            throw new Error(lastError.response.data?.message || `Error: ${lastError.response.status}`);
         }
-      } else if (lastError.code === 'ECONNABORTED') {
-        throw new Error('การอัปโหลดหมดเวลา โปรดลองใช้ไฟล์ที่มีขนาดเล็กลง');
       } else if (lastError.request) {
-        throw new Error('ไม่ได้รับการตอบกลับจากเซิร์ฟเวอร์ โปรดตรวจสอบการเชื่อมต่อและลองอีกครั้ง');
+        // No response received
+        throw new Error('No response from server. Please check your connection and try again.');
       } else {
-        throw lastError;
+        // Something else happened
+        throw new Error(lastError.message || 'An error occurred during file upload.');
       }
     } catch (error) {
-      console.error('Error in file upload:', error);
+      console.error('File upload error:', error);
       throw error;
     }
   },
