@@ -1,6 +1,6 @@
 import { pool } from '../config/db.js';
 import { logger } from '../utils/logger.js';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import { validatePassword } from '../utils/validator.js';
 import { sendEmail } from '../utils/emailService.js';
 

@@ -1,5 +1,5 @@
 // backend/src/controllers/userController.js
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import { pool } from '../config/db.js';
 import { logger } from '../utils/logger.js';
 import { validatePassword } from '../utils/validator.js';

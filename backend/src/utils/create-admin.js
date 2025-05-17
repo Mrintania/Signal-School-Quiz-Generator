@@ -1,4 +1,4 @@
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import mysql from 'mysql2/promise';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
@@ -25,7 +25,7 @@ async function createAdmin() {
     const admin = {
       first_name: 'Pornsupat',
       last_name: 'Vutisuwan',
-      email: 'babylony@signalschool.ac.th',
+      email: 'pornsupat.vu@signalschool.ac.th',
       password: 'password1234',
       role: 'admin',
       status: 'active',

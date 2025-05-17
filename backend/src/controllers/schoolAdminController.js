@@ -1,5 +1,5 @@
 // backend/src/controllers/schoolAdminController.js
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { pool } from '../config/db.js';
 import { logger } from '../utils/logger.js';
