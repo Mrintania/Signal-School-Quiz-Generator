@@ -40,7 +40,8 @@ const createTransporter = () => {
       logger.info(`From: ${mailOptions.from || process.env.EMAIL_FROM || 'no-reply@signalschool.com'}`);
       logger.info(`To: ${mailOptions.to}`);
       logger.info(`Subject: ${mailOptions.subject}`);
-      logger.info(`HTML: ${mailOptions.html.substring(0, 150)}...`);
+      const sanitizedHtml = mailOptions.html.replace(/<li>Password:.*?<\/li>/, '<li>Password: [REDACTED]</li>');
+      logger.info(`HTML: ${sanitizedHtml.substring(0, 150)}...`);
       
       return Promise.resolve({
         accepted: [mailOptions.to],
