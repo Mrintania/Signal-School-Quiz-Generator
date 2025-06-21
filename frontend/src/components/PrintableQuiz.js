@@ -1,5 +1,6 @@
 import React, { useRef } from 'react';
 import { Button, Card } from 'react-bootstrap';
+import DOMPurify from 'dompurify';
 
 const PrintableQuiz = ({ quiz, includeAnswers = false }) => {
     const printRef = useRef();
@@ -7,6 +8,7 @@ const PrintableQuiz = ({ quiz, includeAnswers = false }) => {
     // Handle print function
     const handlePrint = () => {
         const printContent = printRef.current.innerHTML;
+        const sanitizedTitle = DOMPurify.sanitize(quiz.title);
 
         // Create a new window for printing
         const printWindow = window.open('', '_blank', 'height=600,width=800');
@@ -16,7 +18,7 @@ const PrintableQuiz = ({ quiz, includeAnswers = false }) => {
       <!DOCTYPE html>
       <html>
         <head>
-          <title>${quiz.title} - Printable Quiz</title>
+          <title>${sanitizedTitle} - Printable Quiz</title>
           <style>
             body {
               font-family: Arial, sans-serif;
