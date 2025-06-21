@@ -155,6 +155,7 @@ class ExportService {
 
         // Escape special characters: ~ = # { } :
         return text
+            .replace(/\\/g, '\\\\') // Escape backslashes first
             .replace(/~/g, '\\~')
             .replace(/=/g, '\\=')
             .replace(/#/g, '\\#')
