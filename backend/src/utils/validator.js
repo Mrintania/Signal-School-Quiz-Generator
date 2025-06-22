@@ -5,21 +5,21 @@ import { body, param, query, validationResult } from 'express-validator';
 export const validatePassword = (password) => {
   // Minimum 8 characters, at least one uppercase letter, one lowercase letter, and one number
   const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
-  
+
   if (!password || password.length < 8) {
     return {
       isValid: false,
       message: 'Password must be at least 8 characters long'
     };
   }
-  
+
   if (!passwordRegex.test(password)) {
     return {
       isValid: false,
       message: 'Password must contain at least one uppercase letter, one lowercase letter, and one number'
     };
   }
-  
+
   return {
     isValid: true
   };
@@ -66,7 +66,7 @@ const commonRules = {
       body('folderId').trim().notEmpty().withMessage('Folder ID is required')
     ]
   },
-  
+
   // Authentication validation rules
   authRules: {
     register: [
@@ -103,7 +103,7 @@ const commonRules = {
       body('idToken').notEmpty().withMessage('ID token is required')
     ]
   },
-  
+
   // User validation rules
   userRules: {
     updateProfile: [
@@ -130,7 +130,7 @@ const commonRules = {
       body('reason').optional().trim()
     ]
   },
-  
+
   // School validation rules
   schoolRules: {
     createSchool: [
@@ -188,7 +188,7 @@ const commonRules = {
       body('departmentId').isInt().withMessage('Department ID is required')
     ]
   },
-  
+
   // Admin validation rules
   adminRules: {
     updateUserStatus: [
@@ -225,7 +225,7 @@ const sanitizeAll = (req, res, next) => {
       }
     }
   }
-  
+
   // Sanitize query params
   if (req.query) {
     for (const key in req.query) {
@@ -234,7 +234,7 @@ const sanitizeAll = (req, res, next) => {
       }
     }
   }
-  
+
   next();
 };
 
