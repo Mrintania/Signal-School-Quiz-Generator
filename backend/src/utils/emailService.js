@@ -40,8 +40,7 @@ const createTransporter = () => {
       logger.info(`From: ${mailOptions.from || process.env.EMAIL_FROM || 'no-reply@signalschool.com'}`);
       logger.info(`To: ${mailOptions.to}`);
       logger.info(`Subject: ${mailOptions.subject}`);
-      const sanitizedHtml = mailOptions.html.replace(/<li>Password:.*?<\/li>/, '<li>Password: [REDACTED]</li>');
-      logger.info(`HTML: ${sanitizedHtml.substring(0, 150)}...`);
+      logger.info('HTML content is present but not logged to avoid exposing sensitive information.');
       
       return Promise.resolve({
         accepted: [mailOptions.to],
