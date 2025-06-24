@@ -27,7 +27,7 @@ const authLimiter = rateLimit({
 // Create a specific limiter for AI generation to avoid abuse
 const aiGenerationLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
-  max: 20, // limit each IP to 20 generation requests per hour
+  max: 50, // limit each IP to 50 generation requests per hour
   standardHeaders: true,
   legacyHeaders: false,
   message: {
