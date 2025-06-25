@@ -258,6 +258,22 @@ SELECT 'teacher', id FROM permissions
 WHERE name IN ('create_quiz', 'edit_quiz', 'delete_quiz', 'share_quiz', 'export_quiz', 
                'import_quiz', 'view_analytics');
 
+-- Add PDF quiz tracking table
+CREATE TABLE pdf_quizzes (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  quiz_id INT NOT NULL,
+  original_filename VARCHAR(255) NOT NULL,
+  file_size INT NOT NULL,
+  pages_count INT,
+  processing_time_ms INT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (quiz_id) REFERENCES quizzes(id) ON DELETE CASCADE
+);
+
+-- Add index for performance
+CREATE INDEX idx_pdf_quizzes_quiz_id ON pdf_quizzes(quiz_id);
+CREATE INDEX idx_pdf_quizzes_created_at ON pdf_quizzes(created_at);
+
 -- Add foreign key to link quizzes with users
 ALTER TABLE quizzes ADD COLUMN user_id INT NOT NULL AFTER id;
 ALTER TABLE quizzes ADD COLUMN school_id INT AFTER user_id;

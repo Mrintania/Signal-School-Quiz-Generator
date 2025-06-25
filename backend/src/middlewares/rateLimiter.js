@@ -27,7 +27,7 @@ const authLimiter = rateLimit({
 // Create a specific limiter for AI generation to avoid abuse
 const aiGenerationLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
-  max: 20, // limit each IP to 20 generation requests per hour
+  max: 50, // limit each IP to 20 generation requests per hour
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -36,4 +36,11 @@ const aiGenerationLimiter = rateLimit({
   }
 });
 
-export { generalLimiter, authLimiter, aiGenerationLimiter };
+const pdfQuizLimit = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // 5 PDF uploads per 15 minutes
+  message: 'Too many PDF uploads, please try again later'
+});
+
+
+export { generalLimiter, authLimiter, aiGenerationLimiter, pdfQuizLimit };

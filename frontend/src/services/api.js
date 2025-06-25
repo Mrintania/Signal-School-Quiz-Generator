@@ -151,6 +151,50 @@ const quizService = {
       console.error('Error checking title availability:', error);
       throw error;
     }
+  },
+  
+  /**
+   * Generate quiz from uploaded file
+   * @param {FormData} formData - File and settings
+   * @param {Object} options - Upload options
+   * @returns {Promise} API response
+   */
+  generateQuizFromFile: async (formData, options = {}) => {
+    try {
+      const response = await authApi.post('/quiz/generate-from-file', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        onUploadProgress: options.onUploadProgress,
+        timeout: 120000, // 2 minutes timeout for file processing
+      });
+
+      return {
+        success: true,
+        data: response.data.quiz,
+        message: response.data.message
+      };
+    } catch (error) {
+      console.error('File quiz generation error:', error);
+      
+      if (error.code === 'ECONNABORTED') {
+        throw new Error('การประมวลผลไฟล์ใช้เวลานานเกินไป กรุณาลองใหม่อีกครั้ง');
+      }
+      
+      if (error.response?.status === 413) {
+        throw new Error('ไฟล์มีขนาดใหญ่เกินไป');
+      }
+      
+      if (error.response?.status === 415) {
+        throw new Error('รูปแบบไฟล์ไม่ถูกต้อง');
+      }
+      
+      throw {
+        success: false,
+        message: error.response?.data?.message || 'ไม่สามารถสร้างข้อสอบจากไฟล์ได้',
+        error: error.response?.data?.error
+      };
+    }
   }
 };
 
@@ -344,7 +388,7 @@ const dashboardService = {
       throw error;
     }
   },
-  
+
   // Get recent activities
   getRecentActivities: async () => {
     try {
@@ -355,7 +399,7 @@ const dashboardService = {
       throw error;
     }
   },
-  
+
   // Get system status (admin only)
   getSystemStatus: async () => {
     try {
@@ -369,9 +413,9 @@ const dashboardService = {
 };
 
 // Export services
-export { 
-  quizService, 
-  authService, 
+export {
+  quizService,
+  authService,
   userService,
   dashboardService,
   adminService
