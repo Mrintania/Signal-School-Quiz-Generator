@@ -1,9 +1,18 @@
+// backend/src/routes/quizRoutes.js
 import express from 'express';
 import QuizController from '../controllers/quizController.js';
 import ExportController from '../controllers/exportController.js';
 import { commonRules, validate, sanitizeAll } from '../utils/validator.js';
 import { generalLimiter, aiGenerationLimiter } from '../middlewares/rateLimiter.js';
-import { authenticateToken } from '../middlewares/auth.js'; // Import authentication middleware
+import { authenticateToken } from '../middlewares/auth.js';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+
+// Get __dirname for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const router = express.Router();
 
@@ -14,7 +23,46 @@ router.use(sanitizeAll);
 router.use(generalLimiter);
 
 // Add authenticateToken to secure routes
-router.use(authenticateToken); // Apply authentication to all quiz routes
+router.use(authenticateToken);
+
+// Configure multer for file uploads
+const uploadDir = path.join(__dirname, '../../../uploads/documents');
+if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, uploadDir);
+    },
+    filename: function (req, file, cb) {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        const fileExtension = path.extname(file.originalname);
+        cb(null, 'doc-' + req.user.userId + '-' + uniqueSuffix + fileExtension);
+    }
+});
+
+const fileFilter = (req, file, cb) => {
+    const allowedTypes = [
+        'application/pdf',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'text/plain'
+    ];
+    
+    if (allowedTypes.includes(file.mimetype)) {
+        cb(null, true);
+    } else {
+        cb(new Error('Only PDF, DOCX, and TXT files are allowed!'), false);
+    }
+};
+
+const upload = multer({
+    storage: storage,
+    limits: {
+        fileSize: 10 * 1024 * 1024, // 10 MB limit
+    },
+    fileFilter: fileFilter
+});
 
 // API Route for generating a quiz - stricter rate limiting for AI calls
 router.post(
@@ -23,6 +71,14 @@ router.post(
     commonRules.quizRules.generate,
     validate,
     QuizController.generateQuiz
+);
+
+// NEW: API Route for generating quiz from file upload
+router.post(
+    '/generate-from-file',
+    aiGenerationLimiter,
+    upload.single('file'),
+    QuizController.generateQuizFromFile
 );
 
 // API Route for saving a generated quiz

@@ -1,9 +1,10 @@
-// backend/src/controllers/quizController.js
 import QuizService from '../services/quizService.js';
 import aiService from '../services/aiService.js';
 import { logger } from '../utils/logger.js';
 import { cacheService } from '../services/cacheService.js';
 import { ErrorService } from '../services/errorService.js';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import fs from 'fs';
 
 /**
  * Controller for handling quiz-related endpoints
@@ -1587,6 +1588,232 @@ class QuizController {
         message: 'An error occurred while fetching quiz dashboard stats',
         error: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
+    }
+  }
+  /**
+   * Generate quiz from uploaded file
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   */
+  static async generateQuizFromFile(req, res) {
+    let filePath = null;
+    
+    try {
+      const userId = req.user?.userId;
+      const uploadedFile = req.file;
+      
+      if (!uploadedFile) {
+        return res.status(400).json({
+          success: false,
+          message: 'ไม่พบไฟล์ที่อัพโหลด'
+        });
+      }
+
+      filePath = uploadedFile.path;
+
+      // Parse settings from request
+      let settings = {};
+      try {
+        settings = JSON.parse(req.body.settings || '{}');
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message: 'รูปแบบการตั้งค่าไม่ถูกต้อง'
+        });
+      }
+
+      const {
+        questionType = 'Multiple Choice',
+        numberOfQuestions = 10,
+        additionalInstructions = '',
+        studentLevel = '',
+        outputLanguage = 'Thai'
+      } = settings;
+
+      // Check if Gemini API key exists
+      if (!process.env.GOOGLE_GEMINI_API_KEY) {
+        throw new Error('Google Gemini API key not configured');
+      }
+
+      // Initialize Gemini AI
+      const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY);
+      const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
+
+      let promptContent = '';
+      let geminiInput = [];
+
+      // Handle different file types
+      if (uploadedFile.mimetype === 'application/pdf') {
+        // For PDF files, send directly to Gemini Vision API
+        const pdfBuffer = fs.readFileSync(uploadedFile.path);
+        const pdfBase64 = pdfBuffer.toString('base64');
+
+        promptContent = `
+          วิเคราะห์เอกสาร PDF นี้และสร้างข้อสอบ ${numberOfQuestions} ข้อ
+          
+          รูปแบบข้อสอบ: ${questionType}
+          ภาษา: ${outputLanguage === 'Thai' ? 'ไทย' : 'English'}
+          ระดับนักเรียน: ${studentLevel || 'ปานกลาง'}
+          คำแนะนำเพิ่มเติม: ${additionalInstructions}
+          
+          สร้างข้อสอบจากเนื้อหาที่สำคัญในเอกสาร โดยให้ผลลัพธ์ในรูปแบบ JSON เท่านั้น ไม่ต้องมีคำอธิบายเพิ่มเติม:
+          {
+            "title": "ชื่อข้อสอบตามเนื้อหา",
+            "questions": [
+              {
+                "questionText": "คำถาม",
+                "options": [
+                  {"text": "ตัวเลือก A", "isCorrect": false},
+                  {"text": "ตัวเลือก B", "isCorrect": true},
+                  {"text": "ตัวเลือก C", "isCorrect": false},
+                  {"text": "ตัวเลือก D", "isCorrect": false}
+                ],
+                "explanation": "คำอธิบาย"
+              }
+            ]
+          }
+        `;
+
+        geminiInput = [
+          promptContent,
+          {
+            inlineData: {
+              data: pdfBase64,
+              mimeType: 'application/pdf'
+            }
+          }
+        ];
+      } else if (uploadedFile.mimetype === 'text/plain') {
+        // For text files, read content and send as text
+        const textContent = fs.readFileSync(uploadedFile.path, 'utf8');
+        
+        promptContent = `
+          สร้างข้อสอบ ${numberOfQuestions} ข้อ จากเนื้อหาต่อไปนี้:
+          
+          เนื้อหา:
+          ${textContent}
+          
+          รูปแบบข้อสอบ: ${questionType}
+          ภาษา: ${outputLanguage === 'Thai' ? 'ไทย' : 'English'}
+          ระดับนักเรียน: ${studentLevel || 'ปานกลาง'}
+          คำแนะนำเพิ่มเติม: ${additionalInstructions}
+          
+          ให้ผลลัพธ์ในรูปแบบ JSON เท่านั้น ไม่ต้องมีคำอธิบายเพิ่มเติม:
+          {
+            "title": "ชื่อข้อสอบ",
+            "questions": [
+              {
+                "questionText": "คำถาม",
+                "options": [
+                  {"text": "ตัวเลือก A", "isCorrect": false},
+                  {"text": "ตัวเลือก B", "isCorrect": true},
+                  {"text": "ตัวเลือก C", "isCorrect": false},
+                  {"text": "ตัวเลือก D", "isCorrect": false}
+                ],
+                "explanation": "คำอธิบาย"
+              }
+            ]
+          }
+        `;
+
+        geminiInput = [promptContent];
+      } else {
+        // For DOCX files - basic text extraction (would need mammoth.js for full support)
+        throw new Error('DOCX files not yet supported. Please use PDF or TXT files.');
+      }
+
+      // Generate content with Gemini
+      const result = await model.generateContent(geminiInput);
+      const response = await result.response;
+      let responseText = response.text();
+
+      // Clean and parse JSON response
+      responseText = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      
+      let quizData;
+      try {
+        quizData = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error('JSON Parse Error:', parseError);
+        console.error('Response Text:', responseText);
+        throw new Error('ไม่สามารถประมวลผลผลลัพธ์จาก AI ได้');
+      }
+
+      // Validate quiz structure
+      if (!quizData.title || !quizData.questions || !Array.isArray(quizData.questions)) {
+        throw new Error('รูปแบบข้อมูลข้อสอบไม่ถูกต้อง');
+      }
+
+      // Create quiz object for saving (adapt based on your existing QuizService structure)
+      const quizToSave = {
+        title: quizData.title,
+        description: `Generated from file: ${uploadedFile.originalname}`,
+        topic: quizData.title,
+        questionType: questionType,
+        questions: quizData.questions,
+        userId: userId,
+        settings: {
+          sourceType: 'file',
+          fileName: uploadedFile.originalname,
+          fileSize: uploadedFile.size,
+          numberOfQuestions,
+          outputLanguage,
+          studentLevel,
+          additionalInstructions
+        }
+      };
+
+      // Save to database (replace with your actual save method)
+      // const savedQuiz = await QuizService.createQuiz(quizToSave);
+
+      // For now, return the generated quiz (you can save it on the frontend)
+      const savedQuiz = {
+        id: Date.now(), // Temporary ID
+        ...quizToSave,
+        createdAt: new Date()
+      };
+
+      // Log the file upload activity
+      logger.info(`Quiz generated from file: ${uploadedFile.originalname} by user ${userId}`);
+
+      res.status(200).json({
+        success: true,
+        quiz: savedQuiz,
+        message: 'สร้างข้อสอบจากไฟล์สำเร็จ'
+      });
+
+    } catch (error) {
+      console.error('File Quiz Generation Error:', error);
+      
+      // Handle specific errors
+      if (error.message.includes('API')) {
+        return res.status(503).json({
+          success: false,
+          message: 'บริการ AI ไม่พร้อมใช้งานชั่วคราว กรุณาลองใหม่อีกครั้ง'
+        });
+      }
+
+      if (error.message.includes('JSON') || error.message.includes('ประมวลผล')) {
+        return res.status(422).json({
+          success: false,
+          message: 'ไม่สามารถประมวลผลเอกสารได้ กรุณาตรวจสอบรูปแบบไฟล์'
+        });
+      }
+
+      res.status(500).json({
+        success: false,
+        message: error.message || 'เกิดข้อผิดพลาดในการสร้างข้อสอบจากไฟล์',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    } finally {
+      // Clean up uploaded file
+      if (filePath && fs.existsSync(filePath)) {
+        try {
+          fs.unlinkSync(filePath);
+        } catch (cleanupError) {
+          console.error('Error cleaning up file:', cleanupError);
+        }
+      }
     }
   }
 }
