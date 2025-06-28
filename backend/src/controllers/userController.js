@@ -1,4 +1,3 @@
-// backend/src/controllers/userController.js
 import bcrypt from 'bcrypt';
 import { pool } from '../config/db.js';
 import { logger } from '../utils/logger.js';
