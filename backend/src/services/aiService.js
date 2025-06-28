@@ -73,10 +73,10 @@ class AIService {
         try {
             // Select model and set parameters
             const model = this.genAI.getGenerativeModel({
-                model: "gemini-2.0-flash", // Use latest available model
+                model: "gemini-2.5-flash-lite-preview-06-17", // Use latest available model
                 generationConfig: {
                     temperature: 1,
-                    maxOutputTokens: 8192,
+                    maxOutputTokens: 64000,
                 },
             });
 
