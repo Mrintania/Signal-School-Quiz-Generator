@@ -1,19 +1,13 @@
-// backend/src/routes/quizRoutes.js
 import express from 'express';
 import QuizController from '../controllers/quizController.js';
-import ExportController from '../controllers/exportController.js';
-import { commonRules, validate, sanitizeAll } from '../utils/validator.js';
-import { generalLimiter, aiGenerationLimiter } from '../middlewares/rateLimiter.js';
 import { authenticateToken } from '../middlewares/auth.js';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 
-// Get __dirname for ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
 const router = express.Router();
 
 // Apply sanitization middleware to all routes
@@ -38,7 +32,12 @@ const storage = multer.diskStorage({
     filename: function (req, file, cb) {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
         const fileExtension = path.extname(file.originalname);
-        cb(null, 'doc-' + req.user.userId + '-' + uniqueSuffix + fileExtension);
+        
+        // Ensure UTF-8 filename handling
+        const sanitizedOriginalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
+        const baseFileName = path.basename(sanitizedOriginalName, fileExtension);
+        
+        cb(null, `doc-${req.user.userId}-${uniqueSuffix}-${baseFileName}${fileExtension}`);
     }
 });
 
@@ -49,10 +48,14 @@ const fileFilter = (req, file, cb) => {
         'text/plain'
     ];
     
+    // Handle UTF-8 filenames properly
+    const originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
+    file.originalname = originalName;
+    
     if (allowedTypes.includes(file.mimetype)) {
         cb(null, true);
     } else {
-        cb(new Error('Only PDF, DOCX, and TXT files are allowed!'), false);
+        cb(new Error('รองรับเฉพาะไฟล์ PDF, DOCX และ TXT เท่านั้น!'), false);
     }
 };
 
@@ -64,6 +67,14 @@ const upload = multer({
     fileFilter: fileFilter
 });
 
+// Apply UTF-8 middleware to all routes
+router.use((req, res, next) => {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    next();
+});
+
+router.use(authenticateToken);
+
 // API Route for generating a quiz - stricter rate limiting for AI calls
 router.post(
     '/generate',
@@ -73,11 +84,18 @@ router.post(
     QuizController.generateQuiz
 );
 
-// NEW: API Route for generating quiz from file upload
+// API Route for generating quiz from file upload with UTF-8 support
 router.post(
     '/generate-from-file',
-    aiGenerationLimiter,
     upload.single('file'),
+    (req, res, next) => {
+        // Additional UTF-8 handling middleware
+        if (req.file && req.file.originalname) {
+            // Ensure proper UTF-8 encoding for filename
+            req.file.originalname = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
+        }
+        next();
+    },
     QuizController.generateQuizFromFile
 );
 

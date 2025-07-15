@@ -1,210 +1,156 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { quizService } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 export function useQuizzes() {
+    const { currentUser } = useAuth();
     const [quizzes, setQuizzes] = useState([]);
     const [selectedQuiz, setSelectedQuiz] = useState(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
-
-    // Pagination state
     const [currentPage, setCurrentPage] = useState(1);
     const [itemsPerPage, setItemsPerPage] = useState(10);
     const [totalItems, setTotalItems] = useState(0);
     const [searchQuery, setSearchQuery] = useState('');
 
-    const fetchQuizzes = useCallback(async (page = 1, limit = 10, search = '') => {
+    const fetchQuizzes = useCallback(async (page = 1, limit = 100, search = '') => {
+        if (!currentUser?.id) {
+            setQuizzes([]);
+            setTotalItems(0);
+            return;
+        }
+
         try {
             setLoading(true);
             setError(null);
 
-            // In a real implementation, these params would be passed to the API
-            // For now, we'll simulate pagination by filtering the results client-side
-            const response = await quizService.getAllQuizzes();
+            const response = await quizService.getAllQuizzes(page, limit, {
+                search,
+                userId: currentUser.id
+            });
 
             if (response.success) {
-                const allQuizzes = response.data;
-
-                // Set total count for pagination
-                setTotalItems(allQuizzes.length);
-
-                // Filter by search term if provided
-                const filteredQuizzes = search
-                    ? allQuizzes.filter(quiz =>
-                        quiz.title.toLowerCase().includes(search.toLowerCase()) ||
-                        quiz.topic.toLowerCase().includes(search.toLowerCase())
-                    )
-                    : allQuizzes;
-
-                // Add folderId if not exists
-                const quizzesWithFolder = filteredQuizzes.map(quiz => ({
+                const allQuizzes = response.data || [];
+                setTotalItems(response.pagination?.total || allQuizzes.length);
+                
+                const quizzesWithFolder = allQuizzes.map(quiz => ({
                     ...quiz,
                     folderId: quiz.folderId || 'root'
                 }));
 
-                // Store all quizzes but only paginate in the UI
                 setQuizzes(quizzesWithFolder);
             } else {
                 setError(response.message || 'Failed to fetch quizzes');
+                setQuizzes([]);
             }
         } catch (err) {
+            console.error('Error fetching quizzes:', err);
             setError(err.message || 'An error occurred while fetching quizzes');
+            setQuizzes([]);
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [currentUser?.id]);
 
-    // Get current page items
+    useEffect(() => {
+        if (currentUser?.id) {
+            fetchQuizzes(1, 100, '');
+        } else {
+            setQuizzes([]);
+            setTotalItems(0);
+        }
+    }, [currentUser?.id, fetchQuizzes]);
+
     const paginatedQuizzes = useMemo(() => {
         const indexOfLastItem = currentPage * itemsPerPage;
         const indexOfFirstItem = indexOfLastItem - itemsPerPage;
 
-        // Filter by search query first
         const filteredQuizzes = searchQuery
             ? quizzes.filter(quiz =>
-                quiz.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                (quiz.topic && quiz.topic.toLowerCase().includes(searchQuery.toLowerCase()))
+                quiz.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                quiz.topic?.toLowerCase().includes(searchQuery.toLowerCase())
             )
             : quizzes;
 
-        // Then paginate the filtered results
         return filteredQuizzes.slice(indexOfFirstItem, indexOfLastItem);
     }, [quizzes, currentPage, itemsPerPage, searchQuery]);
 
-    // Change page
-    const paginate = (pageNumber) => setCurrentPage(pageNumber);
-
-    // Other functions remain the same...
-    const deleteQuiz = useCallback(async (quizId) => {
-        if (!quizId) return { success: false };
-
-        try {
-            setLoading(true);
-            const response = await quizService.deleteQuiz(quizId);
-
-            if (response.success) {
-                // Update local state
-                setQuizzes(prevQuizzes => prevQuizzes.filter(quiz => quiz.id !== quizId));
-                return { success: true };
-            } else {
-                setError(response.message || 'Failed to delete quiz');
-                return { success: false, message: response.message };
-            }
-        } catch (err) {
-            setError(err.message || 'An error occurred while deleting quiz');
-            return { success: false, message: err.message };
-        } finally {
-            setLoading(false);
-        }
+    const addQuiz = useCallback((newQuiz) => {
+        setQuizzes(prev => [newQuiz, ...prev]);
+        setTotalItems(prev => prev + 1);
     }, []);
 
-    const renameQuiz = useCallback(async (quizId, newTitle) => {
-        if (!quizId || !newTitle.trim()) return { success: false };
-
-        try {
-            setLoading(true);
-            const response = await quizService.renameQuiz(quizId, newTitle);
-
-            if (response.success) {
-                // Update local state
-                setQuizzes(prevQuizzes =>
-                    prevQuizzes.map(quiz =>
-                        quiz.id === quizId ? { ...quiz, title: newTitle } : quiz
-                    )
-                );
-                return { success: true };
-            } else {
-                setError(response.message || 'Failed to rename quiz');
-                return { success: false, message: response.message };
-            }
-        } catch (err) {
-            setError(err.message || 'An error occurred while renaming quiz');
-            return { success: false, message: err.message };
-        } finally {
-            setLoading(false);
-        }
+    const updateQuiz = useCallback((quizId, updatedData) => {
+        setQuizzes(prev => prev.map(quiz => 
+            quiz.id === quizId ? { ...quiz, ...updatedData } : quiz
+        ));
     }, []);
 
-    const moveQuiz = useCallback((quizId, folderId) => {
-        try {
-            // Instead of API request, use localStorage
-            const quizFolders = JSON.parse(localStorage.getItem('quizFolders') || '{}');
-
-            // Save information about which quiz is in which folder
-            quizFolders[quizId] = folderId;
-            localStorage.setItem('quizFolders', JSON.stringify(quizFolders));
-
-            // Update UI
-            setQuizzes(prevQuizzes =>
-                prevQuizzes.map(quiz =>
-                    quiz.id === quizId ? { ...quiz, folderId: folderId } : quiz
-                )
-            );
-
-            window.dispatchEvent(new Event('storage'));
-
-            return { success: true };
-        } catch (err) {
-            setError(err.message || 'An error occurred while moving quiz');
-            return { success: false, message: err.message };
-        }
+    const deleteQuiz = useCallback((quizId) => {
+        setQuizzes(prev => prev.filter(quiz => quiz.id !== quizId));
+        setTotalItems(prev => prev - 1);
     }, []);
 
-    // Initialize quizzes on component mount
-    useEffect(() => {
-        fetchQuizzes(currentPage, itemsPerPage, searchQuery).then(() => {
-            // After fetching quizzes, check localStorage for folder assignments
-            const quizFolders = JSON.parse(localStorage.getItem('quizFolders') || '{}');
+    const selectQuiz = useCallback((quiz) => {
+        setSelectedQuiz(quiz);
+    }, []);
 
-            // Update folder IDs based on localStorage
-            setQuizzes(prevQuizzes => prevQuizzes.map(quiz => {
-                if (quizFolders[quiz.id]) {
-                    return { ...quiz, folderId: quizFolders[quiz.id] };
-                }
-                return quiz;
-            }));
-        });
+    const clearSelection = useCallback(() => {
+        setSelectedQuiz(null);
+    }, []);
 
-        // Listen for changes in localStorage
-        const handleStorageChange = () => {
-            const quizFolders = JSON.parse(localStorage.getItem('quizFolders') || '{}');
+    const searchQuizzes = useCallback((query) => {
+        setSearchQuery(query);
+        setCurrentPage(1);
+    }, []);
 
-            setQuizzes(prevQuizzes => prevQuizzes.map(quiz => {
-                if (quizFolders[quiz.id]) {
-                    return { ...quiz, folderId: quizFolders[quiz.id] };
-                }
-                return quiz;
-            }));
-        };
+    const goToPage = useCallback((page) => {
+        setCurrentPage(page);
+    }, []);
 
-        window.addEventListener('storage', handleStorageChange);
+    const goToPreviousPage = useCallback(() => {
+        setCurrentPage(prev => Math.max(prev - 1, 1));
+    }, []);
 
-        return () => {
-            window.removeEventListener('storage', handleStorageChange);
-        };
-    }, [fetchQuizzes, currentPage, itemsPerPage, searchQuery]);
+    const goToNextPage = useCallback(() => {
+        const maxPage = Math.ceil(totalItems / itemsPerPage);
+        setCurrentPage(prev => Math.min(prev + 1, maxPage));
+    }, [totalItems, itemsPerPage]);
+
+    const totalPages = Math.ceil(totalItems / itemsPerPage);
+    const hasNextPage = currentPage < totalPages;
+    const hasPreviousPage = currentPage > 1;
+
+    const refreshQuizzes = useCallback(() => {
+        if (currentUser?.id) {
+            fetchQuizzes(currentPage, itemsPerPage, searchQuery);
+        }
+    }, [currentUser?.id, currentPage, itemsPerPage, searchQuery, fetchQuizzes]);
 
     return {
-        quizzes,       // All quizzes
-        paginatedQuizzes, // Current page quizzes
+        quizzes,
+        paginatedQuizzes,
         selectedQuiz,
-        setSelectedQuiz,
         loading,
         error,
-        setError,
-        fetchQuizzes,
-        deleteQuiz,
-        renameQuiz,
-        moveQuiz,
-        // Pagination
         currentPage,
-        setCurrentPage,
         itemsPerPage,
-        setItemsPerPage,
         totalItems,
-        paginate,
-        // Search
+        totalPages,
+        hasNextPage,
+        hasPreviousPage,
         searchQuery,
-        setSearchQuery
+        fetchQuizzes,
+        addQuiz,
+        updateQuiz,
+        deleteQuiz,
+        selectQuiz,
+        clearSelection,
+        searchQuizzes,
+        goToPage,
+        goToPreviousPage,
+        goToNextPage,
+        setItemsPerPage,
+        refreshQuizzes
     };
 }

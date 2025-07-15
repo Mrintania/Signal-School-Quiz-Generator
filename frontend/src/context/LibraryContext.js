@@ -3,61 +3,69 @@ import { useSearchParams } from 'react-router-dom';
 import { useFolders } from '../hooks/useFolders';
 import { useQuizzes } from '../hooks/useQuizzes';
 import { useLibrarySort } from '../hooks/useLibrarySort';
+import { useAuth } from './AuthContext';
 
-// Create context
 const LibraryContext = createContext();
 
-// Provider component
 export function LibraryProvider({ children }) {
+    const { currentUser, isAuthenticated } = useAuth();
     const [searchParams] = useSearchParams();
     const [currentFolder, setCurrentFolder] = useState('root');
     const [searchTerm, setSearchTerm] = useState('');
     const [successMessage, setSuccessMessage] = useState(null);
+    const [error, setError] = useState(null);
     const [currentPage, setCurrentPage] = useState(1);
     const [itemsPerPage, setItemsPerPage] = useState(10);
     const [totalItems, setTotalItems] = useState(0);
 
-    // Initialize hooks
     const folderTools = useFolders();
     const quizTools = useQuizzes();
 
-    // Get filtered items based on current folder and search term
-    const filteredFolders = folderTools.folders.filter(folder =>
-        folder.parentId === currentFolder && folder.id !== 'root'
-    );
+    useEffect(() => {
+        console.log('LibraryContext Debug:', {
+            isAuthenticated,
+            currentUser: currentUser?.id,
+            quizzesCount: quizTools.quizzes?.length,
+            loading: quizTools.loading,
+            error: quizTools.error
+        });
+    }, [isAuthenticated, currentUser, quizTools.quizzes, quizTools.loading, quizTools.error]);
 
-    const filteredQuizzes = quizTools.quizzes.filter(quiz => {
-        // Filter by current folder
+    useEffect(() => {
+        if (quizTools.error) {
+            setError(quizTools.error);
+        }
+    }, [quizTools.error]);
+
+    const filteredFolders = folderTools.folders?.filter(folder =>
+        folder.parentId === currentFolder && folder.id !== 'root'
+    ) || [];
+
+    const filteredQuizzes = quizTools.quizzes?.filter(quiz => {
         const folderMatch = quiz.folderId === currentFolder ||
             (currentFolder === 'root' && (!quiz.folderId || quiz.folderId === 'root'));
 
-        // Filter by search term if provided
         const searchMatch = !searchTerm ||
-            quiz.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            quiz.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
             (quiz.topic && quiz.topic.toLowerCase().includes(searchTerm.toLowerCase()));
 
         return folderMatch && searchMatch;
-    });
+    }) || [];
 
-    // Use sort hook
     const sortTools = useLibrarySort(filteredFolders, filteredQuizzes);
 
-    // Set total items count
     useEffect(() => {
-        setTotalItems(sortTools.sortedItems.length);
+        setTotalItems(sortTools.sortedItems?.length || 0);
     }, [sortTools.sortedItems]);
 
-    // Function to change current folder
     const changeFolder = (folderId) => {
         setCurrentFolder(folderId);
         setSearchTerm('');
         setCurrentPage(1);
     };
 
-    // Pagination function
     const paginate = (pageNumber) => setCurrentPage(pageNumber);
 
-    // Update current folder based on URL parameter
     useEffect(() => {
         const folderParam = searchParams.get('folder');
         if (folderParam) {
@@ -67,42 +75,61 @@ export function LibraryProvider({ children }) {
         }
     }, [searchParams]);
 
-    // Clear success message after 3 seconds
     useEffect(() => {
         if (successMessage) {
-            const timer = setTimeout(() => {
-                setSuccessMessage(null);
-            }, 3000);
-
+            const timer = setTimeout(() => setSuccessMessage(null), 3000);
             return () => clearTimeout(timer);
         }
     }, [successMessage]);
 
-    // Combine success messages from different hooks
     useEffect(() => {
-        if (folderTools.successMessage) {
-            setSuccessMessage(folderTools.successMessage);
-            folderTools.setSuccessMessage(null);
+        if (error) {
+            const timer = setTimeout(() => setError(null), 5000);
+            return () => clearTimeout(timer);
         }
-    }, [folderTools.successMessage]);
+    }, [error]);
 
-    // Context value
+    const refreshData = () => {
+        setError(null);
+        if (quizTools.refreshQuizzes) {
+            quizTools.refreshQuizzes();
+        }
+    };
+
     const contextValue = {
+        folders: folderTools.folders || [],
         currentFolder,
         changeFolder,
+        quizzes: quizTools.quizzes || [],
+        loading: quizTools.loading || folderTools.loading || false,
+        error: error || quizTools.error || folderTools.error,
+        setError,
         searchTerm,
         setSearchTerm,
-        successMessage,
-        setSuccessMessage,
+        ...sortTools,
         currentPage,
-        setCurrentPage,
         itemsPerPage,
-        setItemsPerPage,
         totalItems,
         paginate,
-        ...folderTools,
-        ...quizTools,
-        ...sortTools
+        setCurrentPage,
+        setItemsPerPage,
+        successMessage,
+        setSuccessMessage,
+        refreshData,
+        fetchQuizzes: quizTools.fetchQuizzes,
+        addQuiz: quizTools.addQuiz,
+        updateQuiz: quizTools.updateQuiz,
+        deleteQuiz: quizTools.deleteQuiz,
+        selectQuiz: quizTools.selectQuiz,
+        selectedQuiz: quizTools.selectedQuiz,
+        clearSelection: quizTools.clearSelection,
+        addFolder: folderTools.addFolder,
+        updateFolder: folderTools.updateFolder,
+        deleteFolder: folderTools.deleteFolder,
+        selectFolder: folderTools.selectFolder,
+        selectedFolder: folderTools.selectedFolder,
+        currentUser,
+        isAuthenticated
     };
 
     return (
@@ -112,7 +139,6 @@ export function LibraryProvider({ children }) {
     );
 }
 
-// Custom hook to use the library context
 export function useLibrary() {
     const context = useContext(LibraryContext);
     if (!context) {
@@ -120,3 +146,5 @@ export function useLibrary() {
     }
     return context;
 }
+
+export default LibraryContext;

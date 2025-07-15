@@ -184,19 +184,19 @@ export const quizService = {
       };
     } catch (error) {
       console.error('File quiz generation error:', error);
-      
+
       if (error.code === 'ECONNABORTED') {
         throw new Error('การประมวลผลไฟล์ใช้เวลานานเกินไป กรุณาลองใหม่อีกครั้ง');
       }
-      
+
       if (error.response?.status === 413) {
         throw new Error('ไฟล์มีขนาดใหญ่เกินไป');
       }
-      
+
       if (error.response?.status === 415) {
         throw new Error('รูปแบบไฟล์ไม่ถูกต้อง');
       }
-      
+
       throw {
         success: false,
         message: error.response?.data?.message || 'ไม่สามารถสร้างข้อสอบจากไฟล์ได้',
@@ -221,33 +221,39 @@ export const quizService = {
   },
 
   /**
-   * Get all quizzes with optional pagination
-   * @param {number} page - Page number
-   * @param {number} limit - Items per page
-   * @returns {Promise} API response
-   */
-  getAllQuizzes: async (page = 1, limit = 10) => {
+ * Get all quizzes with optional pagination and filtering
+ * @param {number} page - Page number
+ * @param {number} limit - Items per page
+ * @param {Object} options - Additional options
+ * @param {string} options.search - Search term
+ * @param {number} options.userId - User ID for filtering
+ * @param {string} options.folder - Folder ID for filtering
+ * @param {string} options.sortBy - Sort field
+ * @param {string} options.sortOrder - Sort order (asc/desc)
+ * @returns {Promise} API response
+ */
+  getAllQuizzes: async (page = 1, limit = 100, options = {}) => {
     try {
-      const response = await api.get(`/quizzes?page=${page}&limit=${limit}`);
+      const params = new URLSearchParams({
+        page: page.toString(),
+        limit: limit.toString()
+      });
+
+      if (options.search) params.append('search', options.search);
+      if (options.folder) params.append('folder', options.folder);
+      if (options.sortBy) params.append('sortBy', options.sortBy);
+      if (options.sortOrder) params.append('sortOrder', options.sortOrder);
+
+      const response = await api.get(`/quizzes?${params.toString()}`);
       return response.data;
     } catch (error) {
       console.error('Error fetching quizzes:', error);
-      throw error.response?.data || { success: false, message: 'Failed to fetch quizzes' };
-    }
-  },
-
-  /**
-   * Get a specific quiz by ID
-   * @param {number} id - Quiz ID
-   * @returns {Promise} API response
-   */
-  getQuizById: async (id) => {
-    try {
-      const response = await api.get(`/quizzes/${id}`);
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching quiz:', error);
-      throw error.response?.data || { success: false, message: 'Failed to fetch quiz' };
+      return {
+        success: false,
+        data: [],
+        pagination: { total: 0, page: 1, limit, totalPages: 0 },
+        message: error.response?.data?.message || 'Failed to fetch quizzes'
+      };
     }
   },
 
@@ -328,6 +334,21 @@ export const quizService = {
     } catch (error) {
       console.error('Error fetching quiz stats:', error);
       throw error.response?.data || { success: false, message: 'Failed to fetch quiz statistics' };
+    }
+  },
+
+  /**
+ * Get a specific quiz by ID
+ * @param {number} id - Quiz ID
+ * @returns {Promise} API response
+ */
+  getQuizById: async (id) => {
+    try {
+      const response = await api.get(`/quizzes/${id}`);
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching quiz:', error);
+      throw error.response?.data || { success: false, message: 'Failed to fetch quiz' };
     }
   }
 };
