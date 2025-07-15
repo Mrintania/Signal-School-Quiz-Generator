@@ -1,10 +1,13 @@
 import express from 'express';
 import QuizController from '../controllers/quizController.js';
-import ExportController from '../controllers/exportController.js';
-import { commonRules, validate, sanitizeAll } from '../utils/validator.js';
-import { generalLimiter, aiGenerationLimiter } from '../middlewares/rateLimiter.js';
-import { authenticateToken } from '../middlewares/auth.js'; // Import authentication middleware
+import { authenticateToken } from '../middlewares/auth.js';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const router = express.Router();
 
 // Apply sanitization middleware to all routes
@@ -14,7 +17,63 @@ router.use(sanitizeAll);
 router.use(generalLimiter);
 
 // Add authenticateToken to secure routes
-router.use(authenticateToken); // Apply authentication to all quiz routes
+router.use(authenticateToken);
+
+// Configure multer for file uploads
+const uploadDir = path.join(__dirname, '../../../uploads/documents');
+if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, uploadDir);
+    },
+    filename: function (req, file, cb) {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        const fileExtension = path.extname(file.originalname);
+        
+        // Ensure UTF-8 filename handling
+        const sanitizedOriginalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
+        const baseFileName = path.basename(sanitizedOriginalName, fileExtension);
+        
+        cb(null, `doc-${req.user.userId}-${uniqueSuffix}-${baseFileName}${fileExtension}`);
+    }
+});
+
+const fileFilter = (req, file, cb) => {
+    const allowedTypes = [
+        'application/pdf',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'text/plain'
+    ];
+    
+    // Handle UTF-8 filenames properly
+    const originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
+    file.originalname = originalName;
+    
+    if (allowedTypes.includes(file.mimetype)) {
+        cb(null, true);
+    } else {
+        cb(new Error('รองรับเฉพาะไฟล์ PDF, DOCX และ TXT เท่านั้น!'), false);
+    }
+};
+
+const upload = multer({
+    storage: storage,
+    limits: {
+        fileSize: 10 * 1024 * 1024, // 10 MB limit
+    },
+    fileFilter: fileFilter
+});
+
+// Apply UTF-8 middleware to all routes
+router.use((req, res, next) => {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    next();
+});
+
+router.use(authenticateToken);
 
 // API Route for generating a quiz - stricter rate limiting for AI calls
 router.post(
@@ -23,6 +82,21 @@ router.post(
     commonRules.quizRules.generate,
     validate,
     QuizController.generateQuiz
+);
+
+// API Route for generating quiz from file upload with UTF-8 support
+router.post(
+    '/generate-from-file',
+    upload.single('file'),
+    (req, res, next) => {
+        // Additional UTF-8 handling middleware
+        if (req.file && req.file.originalname) {
+            // Ensure proper UTF-8 encoding for filename
+            req.file.originalname = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
+        }
+        next();
+    },
+    QuizController.generateQuizFromFile
 );
 
 // API Route for saving a generated quiz

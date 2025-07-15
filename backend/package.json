@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
-    "@google/generative-ai": "^0.24.0",
+    "@google/generative-ai": "^0.24.1",
     "bcrypt": "^5.1.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
@@ -26,6 +26,8 @@
     "node-cache": "^5.1.2",
     "nodemailer": "^7.0.3",
     "openai": "^4.87.3",
+    "pdf-parse": "^1.1.1",
+    "pdf2pic": "^3.2.0",
     "winston": "^3.17.0",
     "xss-clean": "^0.1.4"
   },
