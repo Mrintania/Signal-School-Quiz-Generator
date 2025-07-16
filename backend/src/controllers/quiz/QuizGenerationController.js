@@ -2,30 +2,33 @@
 import BaseController from '../base/BaseController.js';
 import { QuizGenerationService } from '../../services/quiz/QuizGenerationService.js';
 import { FileService } from '../../services/common/FileService.js';
-import { QuizGenerationDTO } from '../../dto/quiz/QuizGenerationDTO.js';
+import { DTOFactory } from '../../dto/quiz/QuizDTOs.js';
 import { ValidationError, UnauthorizedError, AIServiceError } from '../../errors/CustomErrors.js';
-import logger from '../../utils/logger.js';
+import logger from '../../utils/common/Logger.js';
 
 /**
  * Quiz Generation Controller
- * จัดการเฉพาะเรื่องการสร้างข้อสอบ
+ * จัดการเฉพาะเรื่องการสร้างข้อสอบด้วย AI
  * แยกออกมาจาก main QuizController เพื่อ Single Responsibility
  */
 export class QuizGenerationController extends BaseController {
-    constructor(quizGenerationService, fileService) {
+    constructor(dependencies = {}) {
         super();
 
         // Inject dependencies
-        this.quizGenerationService = quizGenerationService || new QuizGenerationService();
-        this.fileService = fileService || new FileService();
+        this.quizGenerationService = dependencies.quizGenerationService || new QuizGenerationService();
+        this.fileService = dependencies.fileService || new FileService();
 
         // Bind methods
         this.generateQuizFromText = this.asyncHandler(this.generateQuizFromText.bind(this));
         this.generateQuizFromFile = this.asyncHandler(this.generateQuizFromFile.bind(this));
         this.regenerateQuizQuestions = this.asyncHandler(this.regenerateQuizQuestions.bind(this));
+        this.generateAdditionalQuestions = this.asyncHandler(this.generateAdditionalQuestions.bind(this));
         this.checkAIServiceHealth = this.asyncHandler(this.checkAIServiceHealth.bind(this));
         this.previewGenerationPrompt = this.asyncHandler(this.previewGenerationPrompt.bind(this));
         this.estimateGenerationCost = this.asyncHandler(this.estimateGenerationCost.bind(this));
+        this.analyzeDifficulty = this.asyncHandler(this.analyzeDifficulty.bind(this));
+        this.validateGenerationInput = this.asyncHandler(this.validateGenerationInput.bind(this));
     }
 
     /**
@@ -33,58 +36,55 @@ export class QuizGenerationController extends BaseController {
      * POST /api/quiz/generate
      */
     async generateQuizFromText(req, res) {
+        const timer = logger.startTimer('quiz-generation-from-text');
         const startTime = Date.now();
 
         try {
-            // Sanitize input
-            const sanitizedBody = this.sanitizeInput(req.body);
+            // Check user authorization
+            const user = this.checkUserAuthorization(req);
 
-            // Validate input using DTO
-            const generationData = new QuizGenerationDTO(sanitizedBody);
+            // Sanitize and validate input
+            const sanitizedBody = this.sanitizeInput(req.body);
+            const generationDTO = DTOFactory.createQuizGeneration({
+                ...sanitizedBody,
+                userId: user.userId
+            });
 
             // Log generation request
-            this.logActivity(req.user, 'quiz_generation_request', {
-                topic: generationData.topic,
-                questionType: generationData.questionType,
-                numberOfQuestions: generationData.numberOfQuestions,
-                ip: req.ip,
-                userAgent: req.get('User-Agent')
+            this.logAction('generate-quiz-from-text', user.userId, {
+                questionType: generationDTO.questionType,
+                questionCount: generationDTO.questionCount,
+                contentLength: generationDTO.content.length
             });
 
             // Generate quiz using service
-            const quiz = await this.quizGenerationService.generateFromText({
-                ...generationData.toJSON(),
-                userId: req.user.userId,
-                source: 'text'
-            });
+            const quiz = await this.quizGenerationService.generateFromText(generationDTO.toObject());
 
-            // Log performance
-            const duration = Date.now() - startTime;
-            logger.logPerformance('Quiz Generation from Text', duration, {
-                userId: req.user.userId,
+            // Transform response
+            const responseData = DTOFactory.quizResponse(quiz);
+
+            // Log success
+            logger.quizGeneration('text-generation-completed', {
+                userId: user.userId,
+                quizId: quiz.id,
                 questionCount: quiz.questions.length,
-                questionType: generationData.questionType
+                duration: timer.end()
             });
 
-            // Return success response
-            return this.sendSuccess(res, quiz, 'สร้างข้อสอบสำเร็จ', 201);
+            return this.sendSuccess(res, responseData, 'สร้างข้อสอบสำเร็จ', 201);
 
         } catch (error) {
-            const duration = Date.now() - startTime;
-            logger.logPerformance('Quiz Generation from Text (Failed)', duration, {
+            logger.errorWithContext(error, {
+                operation: 'generateQuizFromText',
                 userId: req.user?.userId,
-                error: error.message
+                duration: Date.now() - startTime
             });
 
-            if (error instanceof ValidationError) {
-                return this.sendError(res, error.message, 400, error);
-            }
-
             if (error instanceof AIServiceError) {
-                return this.sendError(res, 'บริการ AI ไม่พร้อมใช้งานชั่วคราว กรุณาลองใหม่อีกครั้ง', 503, error);
+                return this.sendError(res, error, 502);
             }
 
-            return this.handleError(res, error, 'ไม่สามารถสร้างข้อสอบได้');
+            return this.sendError(res, error);
         }
     }
 
@@ -93,403 +93,439 @@ export class QuizGenerationController extends BaseController {
      * POST /api/quiz/generate-from-file
      */
     async generateQuizFromFile(req, res) {
-        const startTime = Date.now();
+        const timer = logger.startTimer('quiz-generation-from-file');
         let filePath = null;
 
         try {
-            // Check if file exists
+            // Check user authorization
+            const user = this.checkUserAuthorization(req);
+
+            // Validate file upload
             if (!req.file) {
-                throw new ValidationError('ไม่พบไฟล์ที่อัพโหลด');
+                throw new ValidationError('ต้องแนบไฟล์สำหรับสร้างข้อสอบ');
+            }
+
+            // Handle file upload errors
+            if (req.fileValidationError) {
+                this.handleFileUploadError(req.fileValidationError);
             }
 
             filePath = req.file.path;
 
-            // Log file upload
-            logger.info('File uploaded for quiz generation', {
+            // Sanitize other inputs
+            const sanitizedBody = this.sanitizeInput(req.body);
+
+            // Create generation parameters
+            const generationParams = {
+                file: req.file,
+                questionType: sanitizedBody.questionType,
+                questionCount: sanitizedBody.questionCount,
+                difficulty: sanitizedBody.difficulty,
+                subject: sanitizedBody.subject,
+                userId: user.userId,
+                options: {
+                    includeExplanations: sanitizedBody.includeExplanations === 'true',
+                    customInstructions: sanitizedBody.customInstructions
+                }
+            };
+
+            // Log file processing start
+            this.logAction('generate-quiz-from-file', user.userId, {
                 fileName: req.file.originalname,
                 fileSize: req.file.size,
-                mimeType: req.file.mimetype,
-                userId: req.user.userId
+                mimeType: req.file.mimetype
             });
 
-            // Validate file
-            const fileValidation = await this.fileService.validateFile(req.file);
-            if (!fileValidation.isValid) {
-                throw new ValidationError(fileValidation.message);
-            }
+            // Generate quiz from file
+            const quiz = await this.quizGenerationService.generateFromFile(generationParams);
 
-            // Extract text from file
-            const extractedText = await this.fileService.extractTextFromFile(req.file);
+            // Transform response
+            const responseData = DTOFactory.quizResponse(quiz);
 
-            if (!extractedText || extractedText.trim().length < 50) {
-                throw new ValidationError('ไฟล์ไม่มีเนื้อหาเพียงพอสำหรับการสร้างข้อสอบ');
-            }
-
-            // Prepare generation data
-            const generationData = new QuizGenerationDTO({
-                content: extractedText,
-                questionType: req.body.questionType || 'multiple_choice',
-                numberOfQuestions: parseInt(req.body.numberOfQuestions) || 5,
-                difficulty: req.body.difficulty || 'medium',
-                language: req.body.language || 'th',
-                category: req.body.category || '',
-                tags: req.body.tags ? req.body.tags.split(',').map(tag => tag.trim()) : []
-            });
-
-            // Log file generation request
-            this.logActivity(req.user, 'quiz_generation_from_file', {
+            // Log success
+            logger.quizGeneration('file-generation-completed', {
+                userId: user.userId,
                 fileName: req.file.originalname,
-                fileSize: req.file.size,
-                contentLength: extractedText.length,
-                questionType: generationData.questionType,
-                numberOfQuestions: generationData.numberOfQuestions,
-                ip: req.ip
+                quizId: quiz.id,
+                questionCount: quiz.questions.length,
+                duration: timer.end()
             });
 
-            // Generate quiz from file content
-            const quiz = await this.quizGenerationService.generateFromText({
-                ...generationData.toJSON(),
-                userId: req.user.userId,
-                source: 'file',
-                fileName: req.file.originalname
-            });
-
-            // Log performance
-            const duration = Date.now() - startTime;
-            logger.logPerformance('Quiz Generation from File', duration, {
-                userId: req.user.userId,
-                fileName: req.file.originalname,
-                questionCount: quiz.questions.length
-            });
-
-            return this.sendSuccess(res, quiz, 'สร้างข้อสอบจากไฟล์สำเร็จ', 201);
+            return this.sendSuccess(res, responseData, 'สร้างข้อสอบจากไฟล์สำเร็จ', 201);
 
         } catch (error) {
-            const duration = Date.now() - startTime;
-            logger.logPerformance('Quiz Generation from File (Failed)', duration, {
+            logger.errorWithContext(error, {
+                operation: 'generateQuizFromFile',
                 userId: req.user?.userId,
-                fileName: req.file?.originalname,
-                error: error.message
+                fileName: req.file?.originalname
             });
 
-            if (error instanceof ValidationError) {
-                return this.sendError(res, error.message, 400, error);
-            }
-
             if (error instanceof AIServiceError) {
-                return this.sendError(res, 'บริการ AI ไม่พร้อมใช้งานชั่วคราว กรุณาลองใหม่อีกครั้ง', 503, error);
+                return this.sendError(res, error, 502);
             }
 
-            return this.handleError(res, error, 'ไม่สามารถสร้างข้อสอบจากไฟล์ได้');
+            return this.sendError(res, error);
+
         } finally {
-            // Cleanup uploaded file
+            // Clean up uploaded file
             if (filePath) {
-                try {
-                    await this.fileService.cleanupFile(filePath);
-                    logger.debug('Uploaded file cleaned up', { filePath });
-                } catch (cleanupError) {
-                    logger.error('Failed to cleanup file:', { filePath, error: cleanupError.message });
-                }
+                await this.fileService.cleanupTempFile(filePath);
             }
         }
     }
 
     /**
-     * สร้างคำถามใหม่สำหรับข้อสอบที่มีอยู่
-     * POST /api/quiz/:id/regenerate-questions
+     * สร้างคำถามเพิ่มเติมสำหรับข้อสอบที่มีอยู่
+     * POST /api/quiz/:id/generate-questions
      */
-    async regenerateQuizQuestions(req, res) {
-        const startTime = Date.now();
-
+    async generateAdditionalQuestions(req, res) {
         try {
-            const { id } = req.params;
-            const { questionIndices, newQuestionType, regenerationReason } = req.body;
+            // Check user authorization
+            const user = this.checkUserAuthorization(req);
 
-            // Validate input
-            this.validateRequiredFields(req.params, ['id']);
+            const { id: quizId } = req.params;
+            const { questionCount } = this.sanitizeInput(req.body);
 
-            if (!questionIndices || !Array.isArray(questionIndices) || questionIndices.length === 0) {
-                throw new ValidationError('ต้องระบุหมายเลขคำถามที่ต้องการสร้างใหม่');
+            // Validate inputs
+            this.validateRequiredFields(req.body, ['questionCount']);
+
+            if (!quizId || isNaN(parseInt(quizId))) {
+                throw new ValidationError('Quiz ID ไม่ถูกต้อง');
             }
 
-            // Validate question indices
-            if (!questionIndices.every(index => Number.isInteger(index) && index >= 0)) {
-                throw new ValidationError('หมายเลขคำถามไม่ถูกต้อง');
-            }
-
-            // Check permissions
-            const hasPermission = await this.quizGenerationService.checkQuizPermission(
-                id,
-                req.user.userId
-            );
-
-            if (!hasPermission) {
-                throw new UnauthorizedError('คุณไม่มีสิทธิ์แก้ไขข้อสอบนี้');
-            }
-
-            // Log regeneration request
-            this.logActivity(req.user, 'quiz_questions_regeneration', {
-                quizId: id,
-                questionIndices,
-                newQuestionType,
-                regenerationReason,
-                ip: req.ip
-            });
-
-            // Regenerate questions
-            const updatedQuiz = await this.quizGenerationService.regenerateQuestions(
-                id,
-                questionIndices,
+            // Generate additional questions
+            const newQuestions = await this.quizGenerationService.generateAdditionalQuestions(
+                parseInt(quizId),
                 {
-                    questionType: newQuestionType,
-                    userId: req.user.userId,
-                    reason: regenerationReason
+                    questionCount: parseInt(questionCount),
+                    userId: user.userId
                 }
             );
 
-            // Log performance
-            const duration = Date.now() - startTime;
-            logger.logPerformance('Quiz Questions Regeneration', duration, {
-                userId: req.user.userId,
-                quizId: id,
-                regeneratedCount: questionIndices.length
+            // Transform response
+            const responseData = DTOFactory.transformArray(newQuestions, 'question');
+
+            this.logAction('generate-additional-questions', user.userId, {
+                quizId: parseInt(quizId),
+                newQuestionCount: newQuestions.length
             });
 
-            return this.sendSuccess(res, updatedQuiz, 'สร้างคำถามใหม่สำเร็จ');
+            return this.sendSuccess(res, responseData, 'สร้างคำถามเพิ่มเติมสำเร็จ');
 
         } catch (error) {
-            const duration = Date.now() - startTime;
-            logger.logPerformance('Quiz Questions Regeneration (Failed)', duration, {
+            logger.errorWithContext(error, {
+                operation: 'generateAdditionalQuestions',
                 userId: req.user?.userId,
-                quizId: req.params?.id,
-                error: error.message
+                quizId: req.params.id
             });
 
-            if (error instanceof ValidationError) {
-                return this.sendError(res, error.message, 400, error);
+            return this.sendError(res, error);
+        }
+    }
+
+    /**
+     * สร้างข้อสอบใหม่จากข้อสอบเดิม (regenerate)
+     * POST /api/quiz/:id/regenerate
+     */
+    async regenerateQuizQuestions(req, res) {
+        try {
+            // Check user authorization
+            const user = this.checkUserAuthorization(req);
+
+            const { id: quizId } = req.params;
+            const {
+                questionCount,
+                difficulty,
+                questionType,
+                keepExisting
+            } = this.sanitizeInput(req.body);
+
+            // Validate quiz ID
+            if (!quizId || isNaN(parseInt(quizId))) {
+                throw new ValidationError('Quiz ID ไม่ถูกต้อง');
             }
 
-            if (error instanceof UnauthorizedError) {
-                return this.sendError(res, error.message, 403, error);
-            }
+            // Regenerate quiz questions
+            const updatedQuiz = await this.quizGenerationService.regenerateQuestions(
+                parseInt(quizId),
+                {
+                    questionCount: questionCount ? parseInt(questionCount) : undefined,
+                    difficulty,
+                    questionType,
+                    keepExisting: keepExisting === 'true',
+                    userId: user.userId
+                }
+            );
 
-            return this.handleError(res, error, 'ไม่สามารถสร้างคำถามใหม่ได้');
+            // Transform response
+            const responseData = DTOFactory.quizResponse(updatedQuiz);
+
+            this.logAction('regenerate-quiz-questions', user.userId, {
+                quizId: parseInt(quizId),
+                newQuestionCount: updatedQuiz.questions.length
+            });
+
+            return this.sendSuccess(res, responseData, 'สร้างข้อสอบใหม่สำเร็จ');
+
+        } catch (error) {
+            logger.errorWithContext(error, {
+                operation: 'regenerateQuizQuestions',
+                userId: req.user?.userId,
+                quizId: req.params.id
+            });
+
+            return this.sendError(res, error);
         }
     }
 
     /**
      * ตรวจสอบสถานะของ AI service
-     * GET /api/quiz/generation/health
+     * GET /api/quiz/ai-health
      */
     async checkAIServiceHealth(req, res) {
         try {
-            const healthStatus = await this.quizGenerationService.checkAIServiceHealth();
+            const user = this.checkUserAuthorization(req);
 
-            // Log health check
-            logger.info('AI Service Health Check', {
-                status: healthStatus.status,
-                userId: req.user?.userId,
-                timestamp: new Date().toISOString()
-            });
+            const healthStatus = await this.quizGenerationService.checkServiceHealth();
+
+            this.logAction('check-ai-health', user.userId, healthStatus);
 
             return this.sendSuccess(res, healthStatus, 'ตรวจสอบสถานะ AI service สำเร็จ');
 
         } catch (error) {
-            logger.error('AI Service Health Check Failed', {
-                error: error.message,
+            logger.errorWithContext(error, {
+                operation: 'checkAIServiceHealth',
                 userId: req.user?.userId
             });
 
-            return this.handleError(res, error, 'ไม่สามารถตรวจสอบสถานะ AI service ได้');
+            return this.sendError(res, error);
         }
     }
 
     /**
-     * ดูตัวอย่าง prompt ที่จะส่งให้ AI
-     * POST /api/quiz/generation/preview-prompt
+     * ดูตัวอย่าง prompt ที่จะส่งไปยัง AI
+     * POST /api/quiz/preview-prompt
      */
     async previewGenerationPrompt(req, res) {
         try {
-            const generationData = new QuizGenerationDTO(req.body);
+            // Check user authorization (admin only for security)
+            const user = this.checkUserAuthorization(req, 'admin');
+
+            const sanitizedBody = this.sanitizeInput(req.body);
 
             // Generate preview prompt
-            const prompt = await this.quizGenerationService.buildPrompt(generationData.toJSON());
-
-            // Log prompt preview
-            this.logActivity(req.user, 'prompt_preview_request', {
-                promptLength: prompt.length,
-                questionType: generationData.questionType,
-                numberOfQuestions: generationData.numberOfQuestions
+            const promptPreview = await this.quizGenerationService.generatePromptPreview({
+                content: sanitizedBody.content,
+                questionType: sanitizedBody.questionType,
+                questionCount: sanitizedBody.questionCount,
+                difficulty: sanitizedBody.difficulty,
+                subject: sanitizedBody.subject
             });
 
-            return this.sendSuccess(res, {
-                prompt,
-                metadata: {
-                    promptLength: prompt.length,
-                    estimatedTokens: Math.ceil(prompt.length / 4), // Rough estimate
-                    generationParams: generationData.toJSON()
-                }
-            }, 'สร้าง prompt ตัวอย่างสำเร็จ');
+            this.logAction('preview-generation-prompt', user.userId, {
+                contentLength: sanitizedBody.content?.length || 0
+            });
+
+            return this.sendSuccess(res, promptPreview, 'สร้างตัวอย่าง prompt สำเร็จ');
 
         } catch (error) {
-            if (error instanceof ValidationError) {
-                return this.sendError(res, error.message, 400, error);
-            }
+            logger.errorWithContext(error, {
+                operation: 'previewGenerationPrompt',
+                userId: req.user?.userId
+            });
 
-            return this.handleError(res, error, 'ไม่สามารถสร้าง prompt ตัวอย่างได้');
+            return this.sendError(res, error);
         }
     }
 
     /**
-     * ประมาณการเวลาและต้นทุนในการสร้างข้อสอบ
-     * POST /api/quiz/generation/estimate
+     * ประเมินค่าใช้จ่ายในการสร้างข้อสอบ
+     * POST /api/quiz/estimate-cost
      */
     async estimateGenerationCost(req, res) {
         try {
-            const generationData = new QuizGenerationDTO(req.body);
+            const user = this.checkUserAuthorization(req);
 
-            // Calculate estimation
-            const estimation = await this.quizGenerationService.estimateGeneration(generationData.toJSON());
+            const sanitizedBody = this.sanitizeInput(req.body);
 
-            // Log estimation request
-            this.logActivity(req.user, 'generation_cost_estimation', {
-                estimatedTime: estimation.estimatedTime,
-                estimatedTokens: estimation.estimatedTokens.total,
-                complexity: estimation.complexity,
-                questionType: generationData.questionType,
-                numberOfQuestions: generationData.numberOfQuestions
+            // Estimate generation cost
+            const costEstimate = await this.quizGenerationService.estimateGenerationCost({
+                content: sanitizedBody.content,
+                questionType: sanitizedBody.questionType,
+                questionCount: sanitizedBody.questionCount,
+                hasFile: !!sanitizedBody.hasFile
             });
 
-            return this.sendSuccess(res, estimation, 'ประมาณการต้นทุนสำเร็จ');
+            this.logAction('estimate-generation-cost', user.userId, costEstimate);
+
+            return this.sendSuccess(res, costEstimate, 'ประเมินค่าใช้จ่ายสำเร็จ');
 
         } catch (error) {
-            if (error instanceof ValidationError) {
-                return this.sendError(res, error.message, 400, error);
-            }
+            logger.errorWithContext(error, {
+                operation: 'estimateGenerationCost',
+                userId: req.user?.userId
+            });
 
-            return this.handleError(res, error, 'ไม่สามารถประมาณการต้นทุนได้');
+            return this.sendError(res, error);
         }
     }
 
     /**
-     * ดึงประวัติการสร้างข้อสอบของผู้ใช้
-     * GET /api/quiz/generation/history
+     * วิเคราะห์ความยากของเนื้อหา
+     * POST /api/quiz/analyze-difficulty
+     */
+    async analyzeDifficulty(req, res) {
+        try {
+            const user = this.checkUserAuthorization(req);
+
+            const { content } = this.sanitizeInput(req.body);
+
+            if (!content || content.trim().length === 0) {
+                throw new ValidationError('ต้องระบุเนื้อหาสำหรับการวิเคราะห์');
+            }
+
+            // Analyze difficulty
+            const analysis = await this.quizGenerationService.analyzeDifficulty(content);
+
+            this.logAction('analyze-difficulty', user.userId, {
+                contentLength: content.length,
+                difficultyLevel: analysis.level
+            });
+
+            return this.sendSuccess(res, analysis, 'วิเคราะห์ความยากสำเร็จ');
+
+        } catch (error) {
+            logger.errorWithContext(error, {
+                operation: 'analyzeDifficulty',
+                userId: req.user?.userId
+            });
+
+            return this.sendError(res, error);
+        }
+    }
+
+    /**
+     * ตรวจสอบความถูกต้องของข้อมูลสำหรับการสร้างข้อสอบ
+     * POST /api/quiz/validate-input
+     */
+    async validateGenerationInput(req, res) {
+        try {
+            const user = this.checkUserAuthorization(req);
+
+            const sanitizedBody = this.sanitizeInput(req.body);
+
+            // Validate input using service
+            const validationResult = await this.quizGenerationService.validateGenerationInput({
+                ...sanitizedBody,
+                userId: user.userId
+            });
+
+            this.logAction('validate-generation-input', user.userId, {
+                isValid: validationResult.isValid,
+                errorCount: validationResult.errors?.length || 0
+            });
+
+            if (validationResult.isValid) {
+                return this.sendSuccess(res, validationResult, 'ข้อมูลถูกต้อง');
+            } else {
+                return this.sendError(res, new ValidationError('ข้อมูลไม่ถูกต้อง', validationResult.errors), 400);
+            }
+
+        } catch (error) {
+            logger.errorWithContext(error, {
+                operation: 'validateGenerationInput',
+                userId: req.user?.userId
+            });
+
+            return this.sendError(res, error);
+        }
+    }
+
+    /**
+     * ดึงประวัติการสร้างข้อสอบ
+     * GET /api/quiz/generation-history
      */
     async getGenerationHistory(req, res) {
         try {
-            const { page = 1, limit = 10 } = req.query;
-            const pagination = this.validatePagination({ page, limit });
+            const user = this.checkUserAuthorization(req);
 
-            const history = await this.quizGenerationService.getGenerationHistory(
-                req.user.userId,
-                pagination
-            );
+            const { page, limit } = this.validatePagination(req.query);
 
-            const paginationMeta = this.createPaginationMeta(
-                history.total,
-                pagination.page,
-                pagination.limit
-            );
+            // Get generation history
+            const history = await this.quizGenerationService.getGenerationHistory(user.userId, {
+                page,
+                limit
+            });
 
-            return this.sendSuccess(res, {
-                history: history.records,
-                pagination: paginationMeta
-            }, 'ดึงประวัติการสร้างข้อสอบสำเร็จ');
+            return this.sendPaginatedResponse(res, history.data, history.pagination, 'ดึงประวัติการสร้างข้อสอบสำเร็จ');
 
         } catch (error) {
-            return this.handleError(res, error, 'ไม่สามารถดึงประวัติการสร้างข้อสอบได้');
-        }
-    }
+            logger.errorWithContext(error, {
+                operation: 'getGenerationHistory',
+                userId: req.user?.userId
+            });
 
-    /**
-     * ดึงการใช้งาน quota ของผู้ใช้
-     * GET /api/quiz/generation/quota
-     */
-    async getUserQuota(req, res) {
-        try {
-            const quotaInfo = await this.quizGenerationService.getUserQuotaInfo(req.user.userId);
-
-            return this.sendSuccess(res, quotaInfo, 'ดึงข้อมูล quota สำเร็จ');
-
-        } catch (error) {
-            return this.handleError(res, error, 'ไม่สามารถดึงข้อมูล quota ได้');
+            return this.sendError(res, error);
         }
     }
 
     /**
      * ยกเลิกการสร้างข้อสอบที่กำลังดำเนินการ
-     * POST /api/quiz/generation/:id/cancel
+     * POST /api/quiz/cancel-generation/:taskId
      */
     async cancelGeneration(req, res) {
         try {
-            const { id } = req.params;
+            const user = this.checkUserAuthorization(req);
+            const { taskId } = req.params;
 
-            const result = await this.quizGenerationService.cancelGeneration(id, req.user.userId);
+            if (!taskId) {
+                throw new ValidationError('ต้องระบุ task ID');
+            }
 
-            this.logActivity(req.user, 'quiz_generation_cancelled', {
-                generationId: id,
-                ip: req.ip
-            });
+            // Cancel generation task
+            const result = await this.quizGenerationService.cancelGeneration(taskId, user.userId);
+
+            this.logAction('cancel-generation', user.userId, { taskId });
 
             return this.sendSuccess(res, result, 'ยกเลิกการสร้างข้อสอบสำเร็จ');
 
         } catch (error) {
-            if (error instanceof ValidationError) {
-                return this.sendError(res, error.message, 400, error);
-            }
-
-            if (error instanceof UnauthorizedError) {
-                return this.sendError(res, error.message, 403, error);
-            }
-
-            return this.handleError(res, error, 'ไม่สามารถยกเลิกการสร้างข้อสอบได้');
-        }
-    }
-
-    /**
-     * บันทึกการตั้งค่าเริ่มต้นสำหรับการสร้างข้อสอบ
-     * POST /api/quiz/generation/defaults
-     */
-    async saveGenerationDefaults(req, res) {
-        try {
-            const defaults = this.sanitizeInput(req.body);
-
-            // Validate defaults using DTO (but allow partial data)
-            const validatedDefaults = {
-                questionType: defaults.questionType || 'multiple_choice',
-                difficulty: defaults.difficulty || 'medium',
-                language: defaults.language || 'th',
-                numberOfQuestions: defaults.numberOfQuestions || 5
-            };
-
-            const result = await this.quizGenerationService.saveUserDefaults(
-                req.user.userId,
-                validatedDefaults
-            );
-
-            this.logActivity(req.user, 'generation_defaults_saved', {
-                defaults: validatedDefaults
+            logger.errorWithContext(error, {
+                operation: 'cancelGeneration',
+                userId: req.user?.userId,
+                taskId: req.params.taskId
             });
 
-            return this.sendSuccess(res, result, 'บันทึกการตั้งค่าเริ่มต้นสำเร็จ');
-
-        } catch (error) {
-            return this.handleError(res, error, 'ไม่สามารถบันทึกการตั้งค่าเริ่มต้นได้');
+            return this.sendError(res, error);
         }
     }
 
     /**
-     * ดึงการตั้งค่าเริ่มต้นของผู้ใช้
-     * GET /api/quiz/generation/defaults
+     * ดึงสถานะการสร้างข้อสอบแบบ real-time
+     * GET /api/quiz/generation-status/:taskId
      */
-    async getGenerationDefaults(req, res) {
+    async getGenerationStatus(req, res) {
         try {
-            const defaults = await this.quizGenerationService.getUserDefaults(req.user.userId);
+            const user = this.checkUserAuthorization(req);
+            const { taskId } = req.params;
 
-            return this.sendSuccess(res, defaults || {}, 'ดึงการตั้งค่าเริ่มต้นสำเร็จ');
+            if (!taskId) {
+                throw new ValidationError('ต้องระบุ task ID');
+            }
+
+            // Get generation status
+            const status = await this.quizGenerationService.getGenerationStatus(taskId, user.userId);
+
+            return this.sendSuccess(res, status, 'ดึงสถานะการสร้างข้อสอบสำเร็จ');
 
         } catch (error) {
-            return this.handleError(res, error, 'ไม่สามารถดึงการตั้งค่าเริ่มต้นได้');
+            logger.errorWithContext(error, {
+                operation: 'getGenerationStatus',
+                userId: req.user?.userId,
+                taskId: req.params.taskId
+            });
+
+            return this.sendError(res, error);
         }
     }
 }

@@ -1,249 +1,622 @@
 // backend/src/services/common/CacheService.js
-import redis from 'redis';
-import logger from '../../utils/logger.js';
+import logger from '../../utils/common/Logger.js';
+import { CacheError } from '../../errors/CustomErrors.js';
 
 /**
  * Cache Service
- * จัดการ caching ด้วย Redis หรือ Memory cache
+ * จัดการระบบ cache สำหรับ application
+ * รองรับ in-memory cache และ Redis (ถ้ามี)
  */
 export class CacheService {
-    constructor() {
-        this.useRedis = process.env.REDIS_URL || process.env.NODE_ENV === 'production';
-        this.defaultTTL = parseInt(process.env.CACHE_TTL) || 3600; // 1 hour
+    constructor(config = {}) {
+        this.config = {
+            defaultTTL: config.defaultTTL || 3600, // 1 hour
+            maxSize: config.maxSize || 1000, // Maximum number of items
+            cleanupInterval: config.cleanupInterval || 300000, // 5 minutes
+            enableMetrics: config.enableMetrics !== false,
+            ...config
+        };
 
-        if (this.useRedis) {
-            this.initRedis();
-        } else {
-            this.initMemoryCache();
-        }
-    }
-
-    async initRedis() {
-        try {
-            this.client = redis.createClient({
-                url: process.env.REDIS_URL || 'redis://localhost:6379'
-            });
-
-            this.client.on('error', (err) => {
-                logger.error('Redis Client Error:', err);
-            });
-
-            this.client.on('connect', () => {
-                logger.info('Connected to Redis');
-            });
-
-            await this.client.connect();
-            this.isConnected = true;
-        } catch (error) {
-            logger.error('Failed to connect to Redis:', error);
-            this.fallbackToMemory();
-        }
-    }
-
-    initMemoryCache() {
+        // In-memory cache storage
         this.cache = new Map();
-        this.timers = new Map();
-        this.isConnected = true;
-        logger.info('Using memory cache');
-    }
+        this.accessTimes = new Map();
+        this.hitCount = 0;
+        this.missCount = 0;
+        this.setCount = 0;
+        this.deleteCount = 0;
 
-    fallbackToMemory() {
-        logger.warn('Falling back to memory cache');
-        this.useRedis = false;
-        this.initMemoryCache();
+        // Start cleanup interval
+        this.startCleanupInterval();
+
+        logger.info('CacheService initialized:', {
+            defaultTTL: this.config.defaultTTL,
+            maxSize: this.config.maxSize,
+            enableMetrics: this.config.enableMetrics
+        });
     }
 
     /**
      * Get value from cache
-     * @param {string} key - Cache key
-     * @returns {Promise<*>} Cached value or null
      */
     async get(key) {
         try {
-            if (this.useRedis && this.isConnected) {
-                const value = await this.client.get(key);
-                return value ? JSON.parse(value) : null;
-            } else {
-                return this.cache.get(key) || null;
+            if (!key || typeof key !== 'string') {
+                throw new CacheError('Cache key must be a non-empty string');
             }
+
+            const item = this.cache.get(key);
+
+            if (!item) {
+                this.recordMiss(key);
+                return null;
+            }
+
+            // Check if item has expired
+            if (this.isExpired(item)) {
+                this.cache.delete(key);
+                this.accessTimes.delete(key);
+                this.recordMiss(key);
+                return null;
+            }
+
+            // Update access time
+            this.accessTimes.set(key, Date.now());
+            this.recordHit(key);
+
+            logger.cache('get', key, {
+                hit: true,
+                ttl: item.ttl,
+                size: this.getValueSize(item.value)
+            });
+
+            return item.value;
+
         } catch (error) {
-            logger.error('Cache get error:', { key, error: error.message });
+            logger.errorWithContext(error, {
+                operation: 'cache.get',
+                key
+            });
+
+            // Return null on error to prevent application crashes
             return null;
         }
     }
 
     /**
      * Set value in cache
-     * @param {string} key - Cache key
-     * @param {*} value - Value to cache
-     * @param {number} ttl - Time to live in seconds
-     * @returns {Promise<boolean>} Success status
      */
-    async set(key, value, ttl = this.defaultTTL) {
+    async set(key, value, ttl = null) {
         try {
-            if (this.useRedis && this.isConnected) {
-                await this.client.setEx(key, ttl, JSON.stringify(value));
-                return true;
-            } else {
-                this.cache.set(key, value);
-
-                // Set expiry timer
-                if (this.timers.has(key)) {
-                    clearTimeout(this.timers.get(key));
-                }
-
-                const timer = setTimeout(() => {
-                    this.cache.delete(key);
-                    this.timers.delete(key);
-                }, ttl * 1000);
-
-                this.timers.set(key, timer);
-                return true;
+            if (!key || typeof key !== 'string') {
+                throw new CacheError('Cache key must be a non-empty string');
             }
+
+            if (value === undefined) {
+                throw new CacheError('Cache value cannot be undefined');
+            }
+
+            const actualTTL = ttl || this.config.defaultTTL;
+            const expiresAt = Date.now() + (actualTTL * 1000);
+
+            const item = {
+                value: this.serializeValue(value),
+                expiresAt,
+                ttl: actualTTL,
+                createdAt: Date.now()
+            };
+
+            // Check cache size limit
+            if (this.cache.size >= this.config.maxSize && !this.cache.has(key)) {
+                await this.evictLeastRecentlyUsed();
+            }
+
+            this.cache.set(key, item);
+            this.accessTimes.set(key, Date.now());
+            this.recordSet(key);
+
+            logger.cache('set', key, {
+                ttl: actualTTL,
+                size: this.getValueSize(value),
+                cacheSize: this.cache.size
+            });
+
+            return true;
+
         } catch (error) {
-            logger.error('Cache set error:', { key, error: error.message });
-            return false;
+            logger.errorWithContext(error, {
+                operation: 'cache.set',
+                key,
+                ttl
+            });
+
+            throw new CacheError(`Failed to set cache: ${error.message}`);
         }
     }
 
     /**
      * Delete value from cache
-     * @param {string} key - Cache key
-     * @returns {Promise<boolean>} Success status
      */
     async delete(key) {
         try {
-            if (this.useRedis && this.isConnected) {
-                await this.client.del(key);
-                return true;
-            } else {
-                if (this.timers.has(key)) {
-                    clearTimeout(this.timers.get(key));
-                    this.timers.delete(key);
-                }
-                return this.cache.delete(key);
+            if (!key || typeof key !== 'string') {
+                throw new CacheError('Cache key must be a non-empty string');
             }
+
+            const deleted = this.cache.delete(key);
+            this.accessTimes.delete(key);
+
+            if (deleted) {
+                this.recordDelete(key);
+
+                logger.cache('delete', key, {
+                    success: true,
+                    cacheSize: this.cache.size
+                });
+            }
+
+            return deleted;
+
         } catch (error) {
-            logger.error('Cache delete error:', { key, error: error.message });
+            logger.errorWithContext(error, {
+                operation: 'cache.delete',
+                key
+            });
+
+            throw new CacheError(`Failed to delete cache: ${error.message}`);
+        }
+    }
+
+    /**
+     * Delete multiple keys by pattern
+     */
+    async deletePattern(pattern) {
+        try {
+            if (!pattern || typeof pattern !== 'string') {
+                throw new CacheError('Pattern must be a non-empty string');
+            }
+
+            const regex = new RegExp(pattern.replace(/\*/g, '.*'));
+            const keysToDelete = [];
+
+            for (const key of this.cache.keys()) {
+                if (regex.test(key)) {
+                    keysToDelete.push(key);
+                }
+            }
+
+            let deletedCount = 0;
+            for (const key of keysToDelete) {
+                if (await this.delete(key)) {
+                    deletedCount++;
+                }
+            }
+
+            logger.cache('deletePattern', pattern, {
+                deletedCount,
+                totalKeys: keysToDelete.length
+            });
+
+            return deletedCount;
+
+        } catch (error) {
+            logger.errorWithContext(error, {
+                operation: 'cache.deletePattern',
+                pattern
+            });
+
+            throw new CacheError(`Failed to delete by pattern: ${error.message}`);
+        }
+    }
+
+    /**
+     * Check if key exists in cache
+     */
+    async has(key) {
+        try {
+            if (!key || typeof key !== 'string') {
+                return false;
+            }
+
+            const item = this.cache.get(key);
+
+            if (!item) {
+                return false;
+            }
+
+            // Check if expired
+            if (this.isExpired(item)) {
+                this.cache.delete(key);
+                this.accessTimes.delete(key);
+                return false;
+            }
+
+            return true;
+
+        } catch (error) {
+            logger.errorWithContext(error, {
+                operation: 'cache.has',
+                key
+            });
+
             return false;
         }
     }
 
     /**
      * Clear all cache
-     * @returns {Promise<boolean>} Success status
      */
     async clear() {
         try {
-            if (this.useRedis && this.isConnected) {
-                await this.client.flushAll();
-                return true;
-            } else {
-                this.cache.clear();
-                this.timers.forEach(timer => clearTimeout(timer));
-                this.timers.clear();
-                return true;
-            }
-        } catch (error) {
-            logger.error('Cache clear error:', error);
-            return false;
-        }
-    }
+            const size = this.cache.size;
 
-    /**
-     * Invalidate cache by pattern
-     * @param {string} pattern - Pattern to match
-     * @returns {Promise<number>} Number of keys deleted
-     */
-    async invalidatePattern(pattern) {
-        try {
-            if (this.useRedis && this.isConnected) {
-                const keys = await this.client.keys(pattern);
-                if (keys.length > 0) {
-                    await this.client.del(keys);
-                }
-                return keys.length;
-            } else {
-                let count = 0;
-                const regex = new RegExp(pattern.replace(/\*/g, '.*'));
+            this.cache.clear();
+            this.accessTimes.clear();
 
-                for (const key of this.cache.keys()) {
-                    if (regex.test(key)) {
-                        await this.delete(key);
-                        count++;
-                    }
-                }
-                return count;
-            }
-        } catch (error) {
-            logger.error('Cache pattern invalidation error:', { pattern, error: error.message });
-            return 0;
-        }
-    }
+            // Reset metrics
+            this.hitCount = 0;
+            this.missCount = 0;
+            this.setCount = 0;
+            this.deleteCount = 0;
 
-    /**
-     * Check if key exists
-     * @param {string} key - Cache key
-     * @returns {Promise<boolean>} Key exists
-     */
-    async exists(key) {
-        try {
-            if (this.useRedis && this.isConnected) {
-                return await this.client.exists(key) === 1;
-            } else {
-                return this.cache.has(key);
-            }
+            logger.cache('clear', 'all', {
+                clearedItems: size
+            });
+
+            return size;
+
         } catch (error) {
-            logger.error('Cache exists error:', { key, error: error.message });
-            return false;
+            logger.errorWithContext(error, {
+                operation: 'cache.clear'
+            });
+
+            throw new CacheError(`Failed to clear cache: ${error.message}`);
         }
     }
 
     /**
      * Get cache statistics
-     * @returns {Object} Cache statistics
      */
-    async getStats() {
+    getStats() {
+        const total = this.hitCount + this.missCount;
+        const hitRate = total > 0 ? (this.hitCount / total * 100).toFixed(2) : 0;
+
+        return {
+            size: this.cache.size,
+            maxSize: this.config.maxSize,
+            hitCount: this.hitCount,
+            missCount: this.missCount,
+            setCount: this.setCount,
+            deleteCount: this.deleteCount,
+            hitRate: `${hitRate}%`,
+            memoryUsage: this.getMemoryUsage(),
+            oldestItem: this.getOldestItemAge(),
+            newestItem: this.getNewestItemAge()
+        };
+    }
+
+    /**
+     * Get all cache keys
+     */
+    getKeys() {
+        return Array.from(this.cache.keys());
+    }
+
+    /**
+     * Get cache size
+     */
+    getSize() {
+        return this.cache.size;
+    }
+
+    /**
+     * Get or set with callback
+     */
+    async getOrSet(key, callback, ttl = null) {
         try {
-            if (this.useRedis && this.isConnected) {
-                const info = await this.client.info('memory');
-                return {
-                    type: 'redis',
-                    connected: this.isConnected,
-                    memory: info
-                };
-            } else {
-                return {
-                    type: 'memory',
-                    connected: this.isConnected,
-                    keys: this.cache.size,
-                    timers: this.timers.size
-                };
+            // Try to get from cache first
+            const cached = await this.get(key);
+            if (cached !== null) {
+                return cached;
             }
+
+            // Execute callback to get value
+            const value = await callback();
+
+            // Store in cache
+            await this.set(key, value, ttl);
+
+            return value;
+
         } catch (error) {
-            return {
-                type: this.useRedis ? 'redis' : 'memory',
-                connected: false,
-                error: error.message
-            };
+            logger.errorWithContext(error, {
+                operation: 'cache.getOrSet',
+                key
+            });
+
+            throw new CacheError(`Failed to getOrSet: ${error.message}`);
         }
     }
 
     /**
-     * Close cache connection
+     * Increment numeric value
      */
-    async close() {
+    async increment(key, delta = 1, ttl = null) {
         try {
-            if (this.useRedis && this.client) {
-                await this.client.quit();
-            } else {
-                this.timers.forEach(timer => clearTimeout(timer));
-                this.cache.clear();
-                this.timers.clear();
-            }
-            this.isConnected = false;
+            const current = await this.get(key);
+            const newValue = (current || 0) + delta;
+
+            await this.set(key, newValue, ttl);
+
+            return newValue;
+
         } catch (error) {
-            logger.error('Error closing cache:', error);
+            logger.errorWithContext(error, {
+                operation: 'cache.increment',
+                key,
+                delta
+            });
+
+            throw new CacheError(`Failed to increment: ${error.message}`);
         }
     }
+
+    /**
+     * Set with expiration time
+     */
+    async setex(key, value, seconds) {
+        return await this.set(key, value, seconds);
+    }
+
+    /**
+     * Set if not exists
+     */
+    async setnx(key, value, ttl = null) {
+        try {
+            const exists = await this.has(key);
+
+            if (!exists) {
+                await this.set(key, value, ttl);
+                return true;
+            }
+
+            return false;
+
+        } catch (error) {
+            logger.errorWithContext(error, {
+                operation: 'cache.setnx',
+                key
+            });
+
+            throw new CacheError(`Failed to setnx: ${error.message}`);
+        }
+    }
+
+    /**
+     * Private helper methods
+     */
+
+    /**
+     * Check if cache item has expired
+     */
+    isExpired(item) {
+        return Date.now() > item.expiresAt;
+    }
+
+    /**
+     * Serialize value for storage
+     */
+    serializeValue(value) {
+        try {
+            // Store primitives and simple objects as-is
+            if (value === null ||
+                typeof value === 'string' ||
+                typeof value === 'number' ||
+                typeof value === 'boolean') {
+                return value;
+            }
+
+            // Serialize objects and arrays
+            return JSON.parse(JSON.stringify(value));
+
+        } catch (error) {
+            logger.warn('Failed to serialize cache value:', {
+                error: error.message,
+                valueType: typeof value
+            });
+
+            return value;
+        }
+    }
+
+    /**
+     * Get memory usage estimation
+     */
+    getMemoryUsage() {
+        let totalSize = 0;
+
+        for (const [key, item] of this.cache.entries()) {
+            totalSize += key.length * 2; // String characters in UTF-16
+            totalSize += this.getValueSize(item.value);
+            totalSize += 64; // Estimated overhead
+        }
+
+        return `${(totalSize / 1024).toFixed(2)} KB`;
+    }
+
+    /**
+     * Get value size estimation
+     */
+    getValueSize(value) {
+        try {
+            if (value === null || value === undefined) {
+                return 8;
+            }
+
+            if (typeof value === 'string') {
+                return value.length * 2; // UTF-16
+            }
+
+            if (typeof value === 'number' || typeof value === 'boolean') {
+                return 8;
+            }
+
+            // For objects, estimate JSON size
+            return JSON.stringify(value).length * 2;
+
+        } catch (error) {
+            return 100; // Default estimation
+        }
+    }
+
+    /**
+     * Get oldest item age
+     */
+    getOldestItemAge() {
+        let oldest = null;
+
+        for (const item of this.cache.values()) {
+            if (!oldest || item.createdAt < oldest) {
+                oldest = item.createdAt;
+            }
+        }
+
+        return oldest ? `${Math.round((Date.now() - oldest) / 1000)}s` : 'N/A';
+    }
+
+    /**
+     * Get newest item age
+     */
+    getNewestItemAge() {
+        let newest = null;
+
+        for (const item of this.cache.values()) {
+            if (!newest || item.createdAt > newest) {
+                newest = item.createdAt;
+            }
+        }
+
+        return newest ? `${Math.round((Date.now() - newest) / 1000)}s` : 'N/A';
+    }
+
+    /**
+     * Evict least recently used item
+     */
+    async evictLeastRecentlyUsed() {
+        try {
+            let lruKey = null;
+            let lruTime = Date.now();
+
+            // Find least recently used key
+            for (const [key, accessTime] of this.accessTimes.entries()) {
+                if (accessTime < lruTime) {
+                    lruTime = accessTime;
+                    lruKey = key;
+                }
+            }
+
+            if (lruKey) {
+                await this.delete(lruKey);
+
+                logger.cache('evict', lruKey, {
+                    reason: 'LRU',
+                    accessTime: lruTime
+                });
+            }
+
+        } catch (error) {
+            logger.errorWithContext(error, {
+                operation: 'cache.evictLRU'
+            });
+        }
+    }
+
+    /**
+     * Start cleanup interval for expired items
+     */
+    startCleanupInterval() {
+        if (this.cleanupTimer) {
+            clearInterval(this.cleanupTimer);
+        }
+
+        this.cleanupTimer = setInterval(() => {
+            this.cleanupExpiredItems();
+        }, this.config.cleanupInterval);
+    }
+
+    /**
+     * Clean up expired items
+     */
+    cleanupExpiredItems() {
+        try {
+            const expiredKeys = [];
+            const now = Date.now();
+
+            for (const [key, item] of this.cache.entries()) {
+                if (now > item.expiresAt) {
+                    expiredKeys.push(key);
+                }
+            }
+
+            for (const key of expiredKeys) {
+                this.cache.delete(key);
+                this.accessTimes.delete(key);
+            }
+
+            if (expiredKeys.length > 0) {
+                logger.cache('cleanup', 'expired', {
+                    cleanedCount: expiredKeys.length,
+                    remainingSize: this.cache.size
+                });
+            }
+
+        } catch (error) {
+            logger.errorWithContext(error, {
+                operation: 'cache.cleanup'
+            });
+        }
+    }
+
+    /**
+     * Metrics recording methods
+     */
+    recordHit(key) {
+        if (this.config.enableMetrics) {
+            this.hitCount++;
+        }
+    }
+
+    recordMiss(key) {
+        if (this.config.enableMetrics) {
+            this.missCount++;
+        }
+    }
+
+    recordSet(key) {
+        if (this.config.enableMetrics) {
+            this.setCount++;
+        }
+    }
+
+    recordDelete(key) {
+        if (this.config.enableMetrics) {
+            this.deleteCount++;
+        }
+    }
+
+    /**
+     * Shutdown cache service
+     */
+    shutdown() {
+        if (this.cleanupTimer) {
+            clearInterval(this.cleanupTimer);
+            this.cleanupTimer = null;
+        }
+
+        this.cache.clear();
+        this.accessTimes.clear();
+
+        logger.info('CacheService shutdown completed');
+    }
 }
+
+export default CacheService;

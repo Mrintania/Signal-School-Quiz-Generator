@@ -2,9 +2,9 @@
 import BaseController from '../base/BaseController.js';
 import { QuizManagementService } from '../../services/quiz/QuizManagementService.js';
 import { CacheService } from '../../services/common/CacheService.js';
-import { CreateQuizDTO, UpdateQuizDTO } from '../../dto/quiz/CreateQuizDTO.js';
+import { DTOFactory } from '../../dto/quiz/QuizDTOs.js';
 import { ValidationError, NotFoundError, UnauthorizedError } from '../../errors/CustomErrors.js';
-import logger from '../../utils/logger.js';
+import logger from '../../utils/common/Logger.js';
 
 /**
  * Quiz Management Controller
@@ -12,12 +12,12 @@ import logger from '../../utils/logger.js';
  * แยกออกมาจาก main QuizController เพื่อ Single Responsibility
  */
 export class QuizManagementController extends BaseController {
-    constructor(quizManagementService, cacheService) {
+    constructor(dependencies = {}) {
         super();
 
         // Inject dependencies
-        this.quizManagementService = quizManagementService || new QuizManagementService();
-        this.cacheService = cacheService || new CacheService();
+        this.quizManagementService = dependencies.quizManagementService || new QuizManagementService();
+        this.cacheService = dependencies.cacheService || new CacheService();
 
         // Bind methods
         this.getAllQuizzes = this.asyncHandler(this.getAllQuizzes.bind(this));
@@ -27,11 +27,16 @@ export class QuizManagementController extends BaseController {
         this.deleteQuiz = this.asyncHandler(this.deleteQuiz.bind(this));
         this.renameQuiz = this.asyncHandler(this.renameQuiz.bind(this));
         this.moveQuiz = this.asyncHandler(this.moveQuiz.bind(this));
+        this.duplicateQuiz = this.asyncHandler(this.duplicateQuiz.bind(this));
         this.shareQuiz = this.asyncHandler(this.shareQuiz.bind(this));
         this.getQuizStatistics = this.asyncHandler(this.getQuizStatistics.bind(this));
         this.searchQuizzes = this.asyncHandler(this.searchQuizzes.bind(this));
-        this.duplicateQuiz = this.asyncHandler(this.duplicateQuiz.bind(this));
+        this.getRecentQuizzes = this.asyncHandler(this.getRecentQuizzes.bind(this));
         this.bulkOperations = this.asyncHandler(this.bulkOperations.bind(this));
+        this.updateQuizQuestions = this.asyncHandler(this.updateQuizQuestions.bind(this));
+        this.checkTitleAvailability = this.asyncHandler(this.checkTitleAvailability.bind(this));
+        this.getQuizVersions = this.asyncHandler(this.getQuizVersions.bind(this));
+        this.restoreQuizVersion = this.asyncHandler(this.restoreQuizVersion.bind(this));
     }
 
     /**
@@ -40,129 +45,109 @@ export class QuizManagementController extends BaseController {
      */
     async getAllQuizzes(req, res) {
         try {
-            const { page = 1, limit = 20, folderId, category, sortBy, sortOrder } = req.query;
-            const pagination = this.validatePagination({ page, limit });
+            const user = this.checkUserAuthorization(req);
+            const pagination = this.validatePagination(req.query);
+            const filters = this.parseFilters(req.query);
+            const sortParams = this.parseSortParams(req.query);
 
-            const filters = {
-                folderId: folderId || null,
-                category: category || null,
-                sortBy: sortBy || 'updated_at',
-                sortOrder: sortOrder || 'DESC'
-            };
+            // Check cache first
+            const cacheKey = this.generateCacheKey(
+                'user-quizzes',
+                user.userId,
+                pagination.page,
+                pagination.limit,
+                JSON.stringify(filters),
+                JSON.stringify(sortParams)
+            );
 
-            // Generate cache key
-            const cacheKey = `quizzes:${req.user.userId}:${JSON.stringify({ pagination, filters })}`;
-
-            // Try cache first
-            const cachedQuizzes = await this.cacheService.get(cacheKey);
-            if (cachedQuizzes) {
-                logger.debug('Returning cached quizzes', { userId: req.user.userId });
-                return this.sendSuccess(res, cachedQuizzes, 'ดึงรายการข้อสอบสำเร็จ (จาก cache)');
+            const cachedData = await this.cacheService.get(cacheKey);
+            if (cachedData) {
+                logger.cache('hit', cacheKey, { userId: user.userId });
+                return this.sendPaginatedResponse(res, cachedData.data, cachedData.pagination);
             }
 
+            // Get quizzes from service
             const result = await this.quizManagementService.getUserQuizzes(
-                req.user.userId,
+                user.userId,
                 pagination,
-                filters
+                { ...filters, ...sortParams }
             );
 
-            const paginationMeta = this.createPaginationMeta(
-                result.total,
-                pagination.page,
-                pagination.limit
-            );
+            // Transform response
+            const responseData = DTOFactory.transformArray(result.data, 'quiz');
 
-            const response = {
-                quizzes: result.quizzes,
-                pagination: paginationMeta,
-                filters: filters
+            // Cache result
+            const responsePayload = {
+                data: responseData,
+                pagination: result.pagination
             };
+            await this.cacheService.set(cacheKey, responsePayload, 300); // 5 minutes
 
-            // Cache for 5 minutes
-            await this.cacheService.set(cacheKey, response, 300);
-
-            this.logActivity(req.user, 'quiz_list_viewed', {
-                total: result.total,
-                page: pagination.page,
-                filters
+            this.logAction('get-all-quizzes', user.userId, {
+                total: result.pagination.total,
+                page: pagination.page
             });
 
-            return this.sendSuccess(res, response, 'ดึงรายการข้อสอบสำเร็จ');
+            return this.sendPaginatedResponse(res, responseData, result.pagination);
 
         } catch (error) {
-            return this.handleError(res, error, 'ไม่สามารถดึงรายการข้อสอบได้');
+            logger.errorWithContext(error, {
+                operation: 'getAllQuizzes',
+                userId: req.user?.userId
+            });
+
+            return this.sendError(res, error);
         }
     }
 
     /**
-     * ดึงข้อมูลข้อสอบตาม ID
+     * ดึงข้อสอบตาม ID
      * GET /api/quiz/:id
      */
     async getQuizById(req, res) {
         try {
-            const { id } = req.params;
-            const { includeStatistics = false } = req.query;
+            const user = this.checkUserAuthorization(req);
+            const { id: quizId } = req.params;
 
-            // Validate required fields
-            this.validateRequiredFields(req.params, ['id']);
-
-            // Generate cache key
-            const cacheKey = `quiz:${id}:${includeStatistics}`;
-
-            // Try cache first
-            const cachedQuiz = await this.cacheService.get(cacheKey);
-            if (cachedQuiz) {
-                logger.debug('Returning cached quiz', { quizId: id });
-                return this.sendSuccess(res, cachedQuiz, 'ดึงข้อมูลข้อสอบสำเร็จ (จาก cache)');
+            // Validate quiz ID
+            if (!quizId || isNaN(parseInt(quizId))) {
+                throw new ValidationError('Quiz ID ไม่ถูกต้อง');
             }
 
-            const quiz = await this.quizManagementService.getQuizById(id, req.user.userId);
+            // Check cache first
+            const cacheKey = this.generateCacheKey('quiz', quizId, user.userId);
+            const cachedQuiz = await this.cacheService.get(cacheKey);
+
+            if (cachedQuiz) {
+                logger.cache('hit', cacheKey, { userId: user.userId, quizId });
+                return this.sendSuccess(res, cachedQuiz);
+            }
+
+            // Get quiz from service
+            const quiz = await this.quizManagementService.getQuizById(parseInt(quizId), user.userId);
 
             if (!quiz) {
-                throw new NotFoundError('Quiz');
+                throw new NotFoundError('ไม่พบข้อสอบที่ระบุ');
             }
 
-            // Check if user has access to this quiz
-            const hasAccess = await this.quizManagementService.checkQuizAccess(id, req.user.userId);
-            if (!hasAccess) {
-                throw new UnauthorizedError('คุณไม่มีสิทธิ์เข้าถึงข้อสอบนี้');
-            }
+            // Transform response
+            const responseData = DTOFactory.quizResponse(quiz);
 
-            let response = quiz;
+            // Cache result
+            await this.cacheService.set(cacheKey, responseData, 600); // 10 minutes
 
-            // Include statistics if requested
-            if (includeStatistics === 'true') {
-                const statistics = await this.quizManagementService.getQuizStatistics(id);
-                response = {
-                    ...quiz,
-                    statistics
-                };
-            }
+            this.logAction('get-quiz-by-id', user.userId, { quizId: parseInt(quizId) });
 
-            // Cache for 10 minutes
-            await this.cacheService.set(cacheKey, response, 600);
-
-            // Update last accessed timestamp
-            await this.quizManagementService.updateLastAccessed(id);
-
-            this.logActivity(req.user, 'quiz_viewed', {
-                quizId: id,
-                title: quiz.title,
-                includeStatistics
-            });
-
-            return this.sendSuccess(res, response, 'ดึงข้อมูลข้อสอบสำเร็จ');
+            return this.sendSuccess(res, responseData);
 
         } catch (error) {
-            if (error instanceof NotFoundError) {
-                return this.sendError(res, 'ไม่พบข้อสอบที่ระบุ', 404, error);
-            }
+            logger.errorWithContext(error, {
+                operation: 'getQuizById',
+                userId: req.user?.userId,
+                quizId: req.params.id
+            });
 
-            if (error instanceof UnauthorizedError) {
-                return this.sendError(res, error.message, 403, error);
-            }
-
-            return this.handleError(res, error, 'ไม่สามารถดึงข้อมูลข้อสอบได้');
+            return this.sendError(res, error);
         }
     }
 
@@ -172,34 +157,50 @@ export class QuizManagementController extends BaseController {
      */
     async createQuiz(req, res) {
         try {
-            // Sanitize and validate input
+            const user = this.checkUserAuthorization(req);
             const sanitizedBody = this.sanitizeInput(req.body);
-            const quizData = new CreateQuizDTO(sanitizedBody);
 
-            // Create quiz
-            const newQuiz = await this.quizManagementService.createQuiz({
-                ...quizData.toJSON(),
-                userId: req.user.userId
+            // Create DTO and validate
+            const createQuizDTO = DTOFactory.createQuiz({
+                ...sanitizedBody,
+                userId: user.userId
             });
 
-            // Invalidate related cache
-            await this.cacheService.invalidatePattern(`quizzes:${req.user.userId}:*`);
+            // Check title availability
+            const titleAvailable = await this.quizManagementService.checkTitleAvailability(
+                createQuizDTO.title,
+                user.userId
+            );
 
-            this.logActivity(req.user, 'quiz_created', {
-                quizId: newQuiz.id,
-                title: newQuiz.title,
-                questionCount: newQuiz.questions.length,
-                ip: req.ip
-            });
-
-            return this.sendSuccess(res, newQuiz, 'สร้างข้อสอบสำเร็จ', 201);
-
-        } catch (error) {
-            if (error instanceof ValidationError) {
-                return this.sendError(res, error.message, 400, error);
+            if (!titleAvailable) {
+                throw new ValidationError('ชื่อข้อสอบนี้มีอยู่แล้ว กรุณาใช้ชื่ออื่น');
             }
 
-            return this.handleError(res, error, 'ไม่สามารถสร้างข้อสอบได้');
+            // Create quiz
+            const quiz = await this.quizManagementService.createQuiz(createQuizDTO.toObject());
+
+            // Transform response
+            const responseData = DTOFactory.quizResponse(quiz);
+
+            // Invalidate user's quiz cache
+            await this.invalidateUserQuizCache(user.userId);
+
+            this.logAction('create-quiz', user.userId, {
+                quizId: quiz.id,
+                title: quiz.title,
+                questionCount: quiz.questions?.length || 0
+            });
+
+            return this.sendSuccess(res, responseData, 'สร้างข้อสอบสำเร็จ', 201);
+
+        } catch (error) {
+            logger.errorWithContext(error, {
+                operation: 'createQuiz',
+                userId: req.user?.userId,
+                title: req.body?.title
+            });
+
+            return this.sendError(res, error);
         }
     }
 
@@ -209,59 +210,59 @@ export class QuizManagementController extends BaseController {
      */
     async updateQuiz(req, res) {
         try {
-            const { id } = req.params;
+            const user = this.checkUserAuthorization(req);
+            const { id: quizId } = req.params;
+            const sanitizedBody = this.sanitizeInput(req.body);
 
-            // Validate required fields
-            this.validateRequiredFields(req.params, ['id']);
-
-            // Check permission
-            const hasPermission = await this.quizManagementService.checkQuizEditPermission(
-                id,
-                req.user.userId
-            );
-
-            if (!hasPermission) {
-                throw new UnauthorizedError('คุณไม่มีสิทธิ์แก้ไขข้อสอบนี้');
+            // Validate quiz ID
+            if (!quizId || isNaN(parseInt(quizId))) {
+                throw new ValidationError('Quiz ID ไม่ถูกต้อง');
             }
 
-            // Sanitize and validate input
-            const sanitizedBody = this.sanitizeInput(req.body);
-            const updateData = new UpdateQuizDTO(sanitizedBody);
+            // Create update DTO
+            const updateQuizDTO = DTOFactory.updateQuiz(sanitizedBody);
+
+            // Check title availability if title is being updated
+            if (updateQuizDTO.title) {
+                const titleAvailable = await this.quizManagementService.checkTitleAvailability(
+                    updateQuizDTO.title,
+                    user.userId,
+                    parseInt(quizId)
+                );
+
+                if (!titleAvailable) {
+                    throw new ValidationError('ชื่อข้อสอบนี้มีอยู่แล้ว กรุณาใช้ชื่ออื่น');
+                }
+            }
 
             // Update quiz
             const updatedQuiz = await this.quizManagementService.updateQuiz(
-                id,
-                updateData.toJSON(),
-                req.user.userId
+                parseInt(quizId),
+                user.userId,
+                updateQuizDTO.toObject()
             );
 
-            // Invalidate related cache
-            await this.cacheService.delete(`quiz:${id}:*`);
-            await this.cacheService.invalidatePattern(`quizzes:${req.user.userId}:*`);
+            // Transform response
+            const responseData = DTOFactory.quizResponse(updatedQuiz);
 
-            this.logActivity(req.user, 'quiz_updated', {
-                quizId: id,
-                title: updatedQuiz.title,
-                changes: Object.keys(updateData.toJSON()),
-                ip: req.ip
+            // Invalidate caches
+            await this.invalidateQuizCache(parseInt(quizId), user.userId);
+
+            this.logAction('update-quiz', user.userId, {
+                quizId: parseInt(quizId),
+                updatedFields: Object.keys(updateQuizDTO.toObject())
             });
 
-            return this.sendSuccess(res, updatedQuiz, 'แก้ไขข้อสอบสำเร็จ');
+            return this.sendSuccess(res, responseData, 'แก้ไขข้อสอบสำเร็จ');
 
         } catch (error) {
-            if (error instanceof ValidationError) {
-                return this.sendError(res, error.message, 400, error);
-            }
+            logger.errorWithContext(error, {
+                operation: 'updateQuiz',
+                userId: req.user?.userId,
+                quizId: req.params.id
+            });
 
-            if (error instanceof UnauthorizedError) {
-                return this.sendError(res, error.message, 403, error);
-            }
-
-            if (error instanceof NotFoundError) {
-                return this.sendError(res, 'ไม่พบข้อสอบที่ระบุ', 404, error);
-            }
-
-            return this.handleError(res, error, 'ไม่สามารถแก้ไขข้อสอบได้');
+            return this.sendError(res, error);
         }
     }
 
@@ -271,58 +272,32 @@ export class QuizManagementController extends BaseController {
      */
     async deleteQuiz(req, res) {
         try {
-            const { id } = req.params;
-            const { permanent = false } = req.query;
+            const user = this.checkUserAuthorization(req);
+            const { id: quizId } = req.params;
 
-            // Validate required fields
-            this.validateRequiredFields(req.params, ['id']);
-
-            // Check permission
-            const hasPermission = await this.quizManagementService.checkQuizEditPermission(
-                id,
-                req.user.userId
-            );
-
-            if (!hasPermission) {
-                throw new UnauthorizedError('คุณไม่มีสิทธิ์ลบข้อสอบนี้');
+            // Validate quiz ID
+            if (!quizId || isNaN(parseInt(quizId))) {
+                throw new ValidationError('Quiz ID ไม่ถูกต้อง');
             }
 
-            // Get quiz info before deletion for logging
-            const quiz = await this.quizManagementService.getQuizById(id, req.user.userId);
-            if (!quiz) {
-                throw new NotFoundError('Quiz');
-            }
+            // Delete quiz
+            const result = await this.quizManagementService.deleteQuiz(parseInt(quizId), user.userId);
 
-            // Delete quiz (soft or hard delete)
-            const deleteResult = await this.quizManagementService.deleteQuiz(
-                id,
-                req.user.userId,
-                permanent === 'true'
-            );
+            // Invalidate caches
+            await this.invalidateQuizCache(parseInt(quizId), user.userId);
 
-            // Invalidate related cache
-            await this.cacheService.delete(`quiz:${id}:*`);
-            await this.cacheService.invalidatePattern(`quizzes:${req.user.userId}:*`);
+            this.logAction('delete-quiz', user.userId, { quizId: parseInt(quizId) });
 
-            this.logActivity(req.user, 'quiz_deleted', {
-                quizId: id,
-                title: quiz.title,
-                permanent: permanent === 'true',
-                ip: req.ip
-            });
-
-            return this.sendSuccess(res, deleteResult, 'ลบข้อสอบสำเร็จ');
+            return this.sendSuccess(res, result, 'ลบข้อสอบสำเร็จ');
 
         } catch (error) {
-            if (error instanceof UnauthorizedError) {
-                return this.sendError(res, error.message, 403, error);
-            }
+            logger.errorWithContext(error, {
+                operation: 'deleteQuiz',
+                userId: req.user?.userId,
+                quizId: req.params.id
+            });
 
-            if (error instanceof NotFoundError) {
-                return this.sendError(res, 'ไม่พบข้อสอบที่ระบุ', 404, error);
-            }
-
-            return this.handleError(res, error, 'ไม่สามารถลบข้อสอบได้');
+            return this.sendError(res, error);
         }
     }
 
@@ -332,137 +307,149 @@ export class QuizManagementController extends BaseController {
      */
     async renameQuiz(req, res) {
         try {
-            const { id } = req.params;
-            const { title } = req.body;
+            const user = this.checkUserAuthorization(req);
+            const { id: quizId } = req.params;
+            const { title } = this.sanitizeInput(req.body);
 
-            // Validate input
-            this.validateRequiredFields(req.params, ['id']);
+            // Validate inputs
+            if (!quizId || isNaN(parseInt(quizId))) {
+                throw new ValidationError('Quiz ID ไม่ถูกต้อง');
+            }
+
             this.validateRequiredFields(req.body, ['title']);
 
-            if (!title || title.trim().length === 0) {
-                throw new ValidationError('ชื่อข้อสอบไม่สามารถเป็นค่าว่างได้');
-            }
-
-            if (title.length > 200) {
-                throw new ValidationError('ชื่อข้อสอบต้องมีความยาวไม่เกิน 200 ตัวอักษร');
-            }
-
-            // Check permission
-            const hasPermission = await this.quizManagementService.checkQuizEditPermission(
-                id,
-                req.user.userId
+            // Check title availability
+            const titleAvailable = await this.quizManagementService.checkTitleAvailability(
+                title,
+                user.userId,
+                parseInt(quizId)
             );
 
-            if (!hasPermission) {
-                throw new UnauthorizedError('คุณไม่มีสิทธิ์แก้ไขข้อสอบนี้');
-            }
-
-            // Check for duplicate title
-            const isDuplicate = await this.quizManagementService.checkDuplicateTitle(
-                title.trim(),
-                req.user.userId,
-                id
-            );
-
-            if (isDuplicate) {
-                throw new ValidationError('ชื่อข้อสอบนี้มีอยู่แล้ว');
+            if (!titleAvailable) {
+                throw new ValidationError('ชื่อข้อสอบนี้มีอยู่แล้ว กรุณาใช้ชื่ออื่น');
             }
 
             // Rename quiz
-            const renamedQuiz = await this.quizManagementService.renameQuiz(
-                id,
-                title.trim(),
-                req.user.userId
+            const updatedQuiz = await this.quizManagementService.renameQuiz(
+                parseInt(quizId),
+                title,
+                user.userId
             );
 
-            // Invalidate related cache
-            await this.cacheService.delete(`quiz:${id}:*`);
-            await this.cacheService.invalidatePattern(`quizzes:${req.user.userId}:*`);
+            // Transform response
+            const responseData = DTOFactory.quizResponse(updatedQuiz);
 
-            this.logActivity(req.user, 'quiz_renamed', {
-                quizId: id,
-                newTitle: title.trim(),
-                ip: req.ip
+            // Invalidate caches
+            await this.invalidateQuizCache(parseInt(quizId), user.userId);
+
+            this.logAction('rename-quiz', user.userId, {
+                quizId: parseInt(quizId),
+                newTitle: title
             });
 
-            return this.sendSuccess(res, renamedQuiz, 'เปลี่ยนชื่อข้อสอบสำเร็จ');
+            return this.sendSuccess(res, responseData, 'เปลี่ยนชื่อข้อสอบสำเร็จ');
 
         } catch (error) {
-            if (error instanceof ValidationError) {
-                return this.sendError(res, error.message, 400, error);
-            }
+            logger.errorWithContext(error, {
+                operation: 'renameQuiz',
+                userId: req.user?.userId,
+                quizId: req.params.id
+            });
 
-            if (error instanceof UnauthorizedError) {
-                return this.sendError(res, error.message, 403, error);
-            }
-
-            return this.handleError(res, error, 'ไม่สามารถเปลี่ยนชื่อข้อสอบได้');
+            return this.sendError(res, error);
         }
     }
 
     /**
-     * ย้ายข้อสอบไปโฟลเดอร์
+     * ย้ายข้อสอบไปยังโฟลเดอร์
      * PATCH /api/quiz/:id/move
      */
     async moveQuiz(req, res) {
         try {
-            const { id } = req.params;
-            const { folderId } = req.body;
+            const user = this.checkUserAuthorization(req);
+            const { id: quizId } = req.params;
+            const { folderId } = this.sanitizeInput(req.body);
 
-            // Validate input
-            this.validateRequiredFields(req.params, ['id']);
-
-            // Check permission
-            const hasPermission = await this.quizManagementService.checkQuizEditPermission(
-                id,
-                req.user.userId
-            );
-
-            if (!hasPermission) {
-                throw new UnauthorizedError('คุณไม่มีสิทธิ์ย้ายข้อสอบนี้');
-            }
-
-            // If folderId is provided, validate folder exists and belongs to user
-            if (folderId) {
-                const folderExists = await this.quizManagementService.checkFolderAccess(
-                    folderId,
-                    req.user.userId
-                );
-
-                if (!folderExists) {
-                    throw new ValidationError('ไม่พบโฟลเดอร์ที่ระบุหรือคุณไม่มีสิทธิ์เข้าถึง');
-                }
+            // Validate quiz ID
+            if (!quizId || isNaN(parseInt(quizId))) {
+                throw new ValidationError('Quiz ID ไม่ถูกต้อง');
             }
 
             // Move quiz
-            const movedQuiz = await this.quizManagementService.moveQuiz(
-                id,
-                folderId,
-                req.user.userId
+            const updatedQuiz = await this.quizManagementService.moveQuiz(
+                parseInt(quizId),
+                folderId ? parseInt(folderId) : null,
+                user.userId
             );
 
-            // Invalidate related cache
-            await this.cacheService.delete(`quiz:${id}:*`);
-            await this.cacheService.invalidatePattern(`quizzes:${req.user.userId}:*`);
+            // Transform response
+            const responseData = DTOFactory.quizResponse(updatedQuiz);
 
-            this.logActivity(req.user, 'quiz_moved', {
-                quizId: id,
-                targetFolderId: folderId,
-                ip: req.ip
+            // Invalidate caches
+            await this.invalidateQuizCache(parseInt(quizId), user.userId);
+
+            this.logAction('move-quiz', user.userId, {
+                quizId: parseInt(quizId),
+                folderId: folderId ? parseInt(folderId) : null
             });
 
-            return this.sendSuccess(res, movedQuiz, 'ย้ายข้อสอบสำเร็จ');
+            return this.sendSuccess(res, responseData, 'ย้ายข้อสอบสำเร็จ');
 
         } catch (error) {
-            if (error instanceof ValidationError) {
-                return this.sendError(res, error.message, 400, error);
+            logger.errorWithContext(error, {
+                operation: 'moveQuiz',
+                userId: req.user?.userId,
+                quizId: req.params.id
+            });
+
+            return this.sendError(res, error);
+        }
+    }
+
+    /**
+     * ทำสำเนาข้อสอบ
+     * POST /api/quiz/:id/duplicate
+     */
+    async duplicateQuiz(req, res) {
+        try {
+            const user = this.checkUserAuthorization(req);
+            const { id: quizId } = req.params;
+            const { title: newTitle } = this.sanitizeInput(req.body);
+
+            // Validate quiz ID
+            if (!quizId || isNaN(parseInt(quizId))) {
+                throw new ValidationError('Quiz ID ไม่ถูกต้อง');
             }
 
-            if (error instanceof UnauthorizedError) {
-                return this.sendError(res, error.message, 403, error);
-            }
+            // Duplicate quiz
+            const duplicatedQuiz = await this.quizManagementService.duplicateQuiz(
+                parseInt(quizId),
+                user.userId,
+                newTitle
+            );
 
-            return this.handleError(res, error, 'ไม่สามารถย้ายข้อสอบได้');
+            // Transform response
+            const responseData = DTOFactory.quizResponse(duplicatedQuiz);
+
+            // Invalidate user's quiz cache
+            await this.invalidateUserQuizCache(user.userId);
+
+            this.logAction('duplicate-quiz', user.userId, {
+                originalQuizId: parseInt(quizId),
+                newQuizId: duplicatedQuiz.id,
+                newTitle: duplicatedQuiz.title
+            });
+
+            return this.sendSuccess(res, responseData, 'ทำสำเนาข้อสอบสำเร็จ', 201);
+
+        } catch (error) {
+            logger.errorWithContext(error, {
+                operation: 'duplicateQuiz',
+                userId: req.user?.userId,
+                quizId: req.params.id
+            });
+
+            return this.sendError(res, error);
         }
     }
 
@@ -472,112 +459,81 @@ export class QuizManagementController extends BaseController {
      */
     async shareQuiz(req, res) {
         try {
-            const { id } = req.params;
-            const { emails, permissions, message, expiresAt } = req.body;
+            const user = this.checkUserAuthorization(req);
+            const { id: quizId } = req.params;
+            const { shareType, recipients, message } = this.sanitizeInput(req.body);
 
-            // Validate input
-            this.validateRequiredFields(req.params, ['id']);
-
-            if (!emails || !Array.isArray(emails) || emails.length === 0) {
-                throw new ValidationError('ต้องระบุอีเมลผู้รับอย่างน้อย 1 คน');
+            // Validate inputs
+            if (!quizId || isNaN(parseInt(quizId))) {
+                throw new ValidationError('Quiz ID ไม่ถูกต้อง');
             }
 
-            // Validate email format
-            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-            const invalidEmails = emails.filter(email => !emailRegex.test(email));
-            if (invalidEmails.length > 0) {
-                throw new ValidationError(`อีเมลไม่ถูกต้อง: ${invalidEmails.join(', ')}`);
-            }
-
-            // Check permission
-            const hasPermission = await this.quizManagementService.checkQuizEditPermission(
-                id,
-                req.user.userId
-            );
-
-            if (!hasPermission) {
-                throw new UnauthorizedError('คุณไม่มีสิทธิ์แชร์ข้อสอบนี้');
-            }
+            this.validateRequiredFields(req.body, ['shareType']);
 
             // Share quiz
             const shareResult = await this.quizManagementService.shareQuiz(
-                id,
+                parseInt(quizId),
+                user.userId,
                 {
-                    emails,
-                    permissions: permissions || 'view',
-                    message: message || '',
-                    expiresAt: expiresAt ? new Date(expiresAt) : null
-                },
-                req.user.userId
+                    shareType,
+                    recipients: recipients || [],
+                    message: message || ''
+                }
             );
 
-            this.logActivity(req.user, 'quiz_shared', {
-                quizId: id,
-                recipients: emails.length,
-                permissions: permissions || 'view',
-                hasMessage: !!message,
-                hasExpiry: !!expiresAt,
-                ip: req.ip
+            this.logAction('share-quiz', user.userId, {
+                quizId: parseInt(quizId),
+                shareType,
+                recipientCount: recipients?.length || 0
             });
 
             return this.sendSuccess(res, shareResult, 'แชร์ข้อสอบสำเร็จ');
 
         } catch (error) {
-            if (error instanceof ValidationError) {
-                return this.sendError(res, error.message, 400, error);
-            }
+            logger.errorWithContext(error, {
+                operation: 'shareQuiz',
+                userId: req.user?.userId,
+                quizId: req.params.id
+            });
 
-            if (error instanceof UnauthorizedError) {
-                return this.sendError(res, error.message, 403, error);
-            }
-
-            return this.handleError(res, error, 'ไม่สามารถแชร์ข้อสอบได้');
+            return this.sendError(res, error);
         }
     }
 
     /**
-     * ดึงสถิติของข้อสอบ
-     * GET /api/quiz/:id/statistics
+     * ดึงสถิติข้อสอบ
+     * GET /api/quiz/statistics
      */
     async getQuizStatistics(req, res) {
         try {
-            const { id } = req.params;
+            const user = this.checkUserAuthorization(req);
 
-            // Validate required fields
-            this.validateRequiredFields(req.params, ['id']);
-
-            // Check access permission
-            const hasAccess = await this.quizManagementService.checkQuizAccess(id, req.user.userId);
-            if (!hasAccess) {
-                throw new UnauthorizedError('คุณไม่มีสิทธิ์ดูสถิติของข้อสอบนี้');
-            }
-
-            // Generate cache key
-            const cacheKey = `quiz:${id}:statistics`;
-
-            // Try cache first
+            // Check cache first
+            const cacheKey = this.generateCacheKey('quiz-statistics', user.userId);
             const cachedStats = await this.cacheService.get(cacheKey);
+
             if (cachedStats) {
-                return this.sendSuccess(res, cachedStats, 'ดึงสถิติข้อสอบสำเร็จ (จาก cache)');
+                logger.cache('hit', cacheKey, { userId: user.userId });
+                return this.sendSuccess(res, cachedStats);
             }
 
-            const statistics = await this.quizManagementService.getQuizStatistics(id);
+            // Get statistics from service
+            const statistics = await this.quizManagementService.getUserStatistics(user.userId);
 
-            // Cache for 10 minutes
-            await this.cacheService.set(cacheKey, statistics, 600);
+            // Cache result
+            await this.cacheService.set(cacheKey, statistics, 300); // 5 minutes
 
-            this.logActivity(req.user, 'quiz_statistics_viewed', {
-                quizId: id
-            });
+            this.logAction('get-quiz-statistics', user.userId);
 
             return this.sendSuccess(res, statistics, 'ดึงสถิติข้อสอบสำเร็จ');
 
         } catch (error) {
-            if (error instanceof UnauthorizedError) {
-                return this.sendError(res, error.message, 403, error);
-            }
+            logger.errorWithContext(error, {
+                operation: 'getQuizStatistics',
+                userId: req.user?.userId
+            });
 
-            return this.handleError(res, error, 'ไม่สามารถดึงสถิติข้อสอบได้');
+            return this.sendError(res, error);
         }
     }
 
@@ -587,150 +543,248 @@ export class QuizManagementController extends BaseController {
      */
     async searchQuizzes(req, res) {
         try {
-            const { q, page = 1, limit = 20, category, difficulty } = req.query;
-
-            if (!q || q.trim().length < 2) {
-                throw new ValidationError('คำค้นหาต้องมีความยาวอย่างน้อย 2 ตัวอักษร');
-            }
-
-            const pagination = this.validatePagination({ page, limit });
-            const filters = {
-                category: category || null,
-                difficulty: difficulty || null
-            };
-
-            const searchResults = await this.quizManagementService.searchQuizzes(
-                q.trim(),
-                req.user.userId,
-                pagination,
-                filters
-            );
-
-            const paginationMeta = this.createPaginationMeta(
-                searchResults.total,
-                pagination.page,
-                pagination.limit
-            );
-
-            this.logActivity(req.user, 'quiz_search', {
-                query: q.trim(),
-                resultCount: searchResults.total,
-                filters
+            const user = this.checkUserAuthorization(req);
+            const searchDTO = DTOFactory.searchQuiz({
+                ...req.query,
+                userId: user.userId
             });
 
-            return this.sendSuccess(res, {
-                quizzes: searchResults.quizzes,
-                pagination: paginationMeta,
-                searchQuery: q.trim(),
-                filters
-            }, 'ค้นหาข้อสอบสำเร็จ');
+            // Search quizzes
+            const result = await this.quizManagementService.searchQuizzes(searchDTO.toObject());
+
+            // Transform response
+            const responseData = DTOFactory.transformArray(result.data, 'quiz');
+
+            this.logAction('search-quizzes', user.userId, {
+                query: searchDTO.query,
+                resultCount: result.data.length
+            });
+
+            return this.sendPaginatedResponse(res, responseData, result.pagination, 'ค้นหาข้อสอบสำเร็จ');
 
         } catch (error) {
-            if (error instanceof ValidationError) {
-                return this.sendError(res, error.message, 400, error);
-            }
+            logger.errorWithContext(error, {
+                operation: 'searchQuizzes',
+                userId: req.user?.userId,
+                query: req.query.query
+            });
 
-            return this.handleError(res, error, 'ไม่สามารถค้นหาข้อสอบได้');
+            return this.sendError(res, error);
         }
     }
 
     /**
-     * คัดลอกข้อสอบ
-     * POST /api/quiz/:id/duplicate
+     * ดึงข้อสอบล่าสุด
+     * GET /api/quiz/recent
      */
-    async duplicateQuiz(req, res) {
+    async getRecentQuizzes(req, res) {
         try {
-            const { id } = req.params;
-            const { title, folderId } = req.body;
+            const user = this.checkUserAuthorization(req);
+            const limit = parseInt(req.query.limit) || 5;
 
-            // Validate required fields
-            this.validateRequiredFields(req.params, ['id']);
+            // Check cache first
+            const cacheKey = this.generateCacheKey('recent-quizzes', user.userId, limit);
+            const cachedQuizzes = await this.cacheService.get(cacheKey);
 
-            // Check access permission
-            const hasAccess = await this.quizManagementService.checkQuizAccess(id, req.user.userId);
-            if (!hasAccess) {
-                throw new UnauthorizedError('คุณไม่มีสิทธิ์คัดลอกข้อสอบนี้');
+            if (cachedQuizzes) {
+                logger.cache('hit', cacheKey, { userId: user.userId });
+                return this.sendSuccess(res, cachedQuizzes);
             }
 
-            // Duplicate quiz
-            const duplicatedQuiz = await this.quizManagementService.duplicateQuiz(
-                id,
-                {
-                    title: title || null,
-                    folderId: folderId || null
-                },
-                req.user.userId
-            );
+            // Get recent quizzes
+            const recentQuizzes = await this.quizManagementService.getRecentQuizzes(user.userId, limit);
 
-            // Invalidate related cache
-            await this.cacheService.invalidatePattern(`quizzes:${req.user.userId}:*`);
+            // Transform response
+            const responseData = DTOFactory.transformArray(recentQuizzes, 'quiz');
 
-            this.logActivity(req.user, 'quiz_duplicated', {
-                originalQuizId: id,
-                newQuizId: duplicatedQuiz.id,
-                newTitle: duplicatedQuiz.title,
-                ip: req.ip
-            });
+            // Cache result
+            await this.cacheService.set(cacheKey, responseData, 300); // 5 minutes
 
-            return this.sendSuccess(res, duplicatedQuiz, 'คัดลอกข้อสอบสำเร็จ', 201);
+            this.logAction('get-recent-quizzes', user.userId, { limit });
+
+            return this.sendSuccess(res, responseData, 'ดึงข้อสอบล่าสุดสำเร็จ');
 
         } catch (error) {
-            if (error instanceof UnauthorizedError) {
-                return this.sendError(res, error.message, 403, error);
-            }
+            logger.errorWithContext(error, {
+                operation: 'getRecentQuizzes',
+                userId: req.user?.userId
+            });
 
-            return this.handleError(res, error, 'ไม่สามารถคัดลอกข้อสอบได้');
+            return this.sendError(res, error);
         }
     }
 
     /**
-     * การดำเนินการแบบ bulk (หลายรายการพร้อมกัน)
+     * ดำเนินการหลายรายการพร้อมกัน
      * POST /api/quiz/bulk
      */
     async bulkOperations(req, res) {
         try {
-            const { action, quizIds, data } = req.body;
+            const user = this.checkUserAuthorization(req);
+            const { operation, quizIds, targetFolderId } = this.sanitizeInput(req.body);
 
-            // Validate input
-            if (!action || !quizIds || !Array.isArray(quizIds) || quizIds.length === 0) {
-                throw new ValidationError('ต้องระบุการกระทำและรายการข้อสอบ');
+            // Validate inputs
+            this.validateRequiredFields(req.body, ['operation', 'quizIds']);
+
+            if (!Array.isArray(quizIds) || quizIds.length === 0) {
+                throw new ValidationError('ต้องระบุรายการข้อสอบ');
             }
 
-            const validActions = ['delete', 'move', 'updateCategory', 'updateTags'];
-            if (!validActions.includes(action)) {
-                throw new ValidationError('การกระทำไม่ถูกต้อง');
-            }
-
-            // Execute bulk operation
+            // Perform bulk operation
             const result = await this.quizManagementService.bulkOperation(
-                action,
-                quizIds,
-                data || {},
-                req.user.userId
+                operation,
+                quizIds.map(id => parseInt(id)),
+                user.userId,
+                { targetFolderId: targetFolderId ? parseInt(targetFolderId) : null }
             );
 
-            // Invalidate related cache
-            await this.cacheService.invalidatePattern(`quizzes:${req.user.userId}:*`);
-            for (const quizId of quizIds) {
-                await this.cacheService.delete(`quiz:${quizId}:*`);
-            }
+            // Invalidate user's quiz cache
+            await this.invalidateUserQuizCache(user.userId);
 
-            this.logActivity(req.user, 'quiz_bulk_operation', {
-                action,
+            this.logAction('bulk-operations', user.userId, {
+                operation,
                 quizCount: quizIds.length,
-                successCount: result.successCount,
-                failureCount: result.failureCount,
-                ip: req.ip
+                affectedCount: result.affected
             });
 
-            return this.sendSuccess(res, result, `ดำเนินการ bulk ${action} สำเร็จ`);
+            return this.sendSuccess(res, result, `ดำเนินการ ${operation} สำเร็จ`);
 
         } catch (error) {
-            if (error instanceof ValidationError) {
-                return this.sendError(res, error.message, 400, error);
+            logger.errorWithContext(error, {
+                operation: 'bulkOperations',
+                userId: req.user?.userId,
+                bulkOperation: req.body?.operation
+            });
+
+            return this.sendError(res, error);
+        }
+    }
+
+    /**
+     * แก้ไขคำถามในข้อสอบ
+     * PUT /api/quiz/:id/questions
+     */
+    async updateQuizQuestions(req, res) {
+        try {
+            const user = this.checkUserAuthorization(req);
+            const { id: quizId } = req.params;
+            const { questions } = this.sanitizeInput(req.body);
+
+            // Validate inputs
+            if (!quizId || isNaN(parseInt(quizId))) {
+                throw new ValidationError('Quiz ID ไม่ถูกต้อง');
             }
 
-            return this.handleError(res, error, 'ไม่สามารถดำเนินการ bulk ได้');
+            this.validateRequiredFields(req.body, ['questions']);
+
+            if (!Array.isArray(questions)) {
+                throw new ValidationError('คำถามต้องเป็น array');
+            }
+
+            // Update quiz questions
+            const updatedQuiz = await this.quizManagementService.updateQuizQuestions(
+                parseInt(quizId),
+                questions,
+                user.userId
+            );
+
+            // Transform response
+            const responseData = DTOFactory.quizResponse(updatedQuiz);
+
+            // Invalidate quiz cache
+            await this.invalidateQuizCache(parseInt(quizId), user.userId);
+
+            this.logAction('update-quiz-questions', user.userId, {
+                quizId: parseInt(quizId),
+                questionCount: questions.length
+            });
+
+            return this.sendSuccess(res, responseData, 'แก้ไขคำถามสำเร็จ');
+
+        } catch (error) {
+            logger.errorWithContext(error, {
+                operation: 'updateQuizQuestions',
+                userId: req.user?.userId,
+                quizId: req.params.id
+            });
+
+            return this.sendError(res, error);
+        }
+    }
+
+    /**
+     * ตรวจสอบความพร้อมใช้งานของชื่อข้อสอบ
+     * GET /api/quiz/check-title
+     */
+    async checkTitleAvailability(req, res) {
+        try {
+            const user = this.checkUserAuthorization(req);
+            const { title, excludeId } = req.query;
+
+            if (!title || title.trim() === '') {
+                throw new ValidationError('ต้องระบุชื่อข้อสอบ');
+            }
+
+            // Check title availability
+            const isAvailable = await this.quizManagementService.checkTitleAvailability(
+                title.trim(),
+                user.userId,
+                excludeId ? parseInt(excludeId) : null
+            );
+
+            return this.sendSuccess(res, { available: isAvailable }, 'ตรวจสอบชื่อข้อสอบสำเร็จ');
+
+        } catch (error) {
+            logger.errorWithContext(error, {
+                operation: 'checkTitleAvailability',
+                userId: req.user?.userId,
+                title: req.query?.title
+            });
+
+            return this.sendError(res, error);
+        }
+    }
+
+    /**
+     * Private helper methods
+     */
+
+    /**
+     * Invalidate quiz-related caches
+     */
+    async invalidateQuizCache(quizId, userId) {
+        try {
+            const patterns = [
+                `quiz:${quizId}:*`,
+                `user-quizzes:${userId}:*`,
+                `recent-quizzes:${userId}:*`,
+                `quiz-statistics:${userId}`
+            ];
+
+            await Promise.all(patterns.map(pattern =>
+                this.cacheService.deletePattern(pattern)
+            ));
+        } catch (error) {
+            logger.warn('Cache invalidation failed:', { error: error.message });
+        }
+    }
+
+    /**
+     * Invalidate user's quiz caches
+     */
+    async invalidateUserQuizCache(userId) {
+        try {
+            const patterns = [
+                `user-quizzes:${userId}:*`,
+                `recent-quizzes:${userId}:*`,
+                `quiz-statistics:${userId}`
+            ];
+
+            await Promise.all(patterns.map(pattern =>
+                this.cacheService.deletePattern(pattern)
+            ));
+        } catch (error) {
+            logger.warn('User quiz cache invalidation failed:', { error: error.message });
         }
     }
 }

@@ -1,562 +1,545 @@
-import { BaseRepository } from './base/BaseRepository.js';
-import logger from '../utils/logger.js';
+// backend/src/repositories/QuizRepository.js
+import BaseRepository from './base/BaseRepository.js';
+import logger from '../utils/common/Logger.js';
+import { NotFoundError, ValidationError, DatabaseError } from '../errors/CustomErrors.js';
 
 /**
  * Quiz Repository
- * จัดการ data access สำหรับ quiz
+ * จัดการ data access สำหรับ quizzes table
+ * ขยายจาก BaseRepository เพื่อเพิ่ม quiz-specific operations
  */
 export class QuizRepository extends BaseRepository {
     constructor() {
-        super('quizzes');
+        super('quizzes', 'id');
     }
 
     /**
-     * Find quizzes by user ID
-     * @param {string} userId - User ID
-     * @param {Object} options - Query options
-     * @returns {Promise<Array>} User's quizzes
+     * Find quizzes by user ID with pagination and filters
      */
     async findByUserId(userId, options = {}) {
-        const conditions = {
-            user_id: userId,
-            deleted_at: null
-        };
+        try {
+            const {
+                folderId = null,
+                category = null,
+                status = 'active',
+                search = null,
+                sortBy = 'updated_at',
+                sortOrder = 'DESC',
+                limit = 20,
+                offset = 0
+            } = options;
 
-        // Add folder condition if specified
-        if (options.folderId) {
-            conditions.folder_id = options.folderId;
+            let query = `
+                SELECT q.*, f.name as folder_name
+                FROM ${this.tableName} q
+                LEFT JOIN folders f ON q.folder_id = f.id
+                WHERE q.user_id = ? AND q.deleted_at IS NULL
+            `;
+            const params = [userId];
+
+            // Add folder filter
+            if (folderId) {
+                query += ' AND q.folder_id = ?';
+                params.push(folderId);
+            }
+
+            // Add category filter
+            if (category) {
+                query += ' AND q.category = ?';
+                params.push(category);
+            }
+
+            // Add status filter
+            if (status) {
+                query += ' AND q.status = ?';
+                params.push(status);
+            }
+
+            // Add search filter
+            if (search && search.trim() !== '') {
+                query += ' AND (q.title LIKE ? OR q.topic LIKE ? OR q.description LIKE ?)';
+                const searchTerm = `%${search}%`;
+                params.push(searchTerm, searchTerm, searchTerm);
+            }
+
+            // Add ordering
+            query += ` ORDER BY q.${sortBy} ${sortOrder}`;
+
+            // Add pagination
+            if (limit) {
+                query += ' LIMIT ?';
+                params.push(limit);
+                
+                if (offset > 0) {
+                    query += ' OFFSET ?';
+                    params.push(offset);
+                }
+            }
+
+            return await this.executeQuery(query, params);
+        } catch (error) {
+            throw this.handleDatabaseError(error);
         }
-
-        // Default order by updated_at DESC
-        const queryOptions = {
-            orderBy: 'updated_at',
-            orderDirection: 'DESC',
-            ...options
-        };
-
-        return await this.findAll(conditions, queryOptions);
     }
 
     /**
-     * Find quizzes in folder
-     * @param {string} folderId - Folder ID
-     * @param {Object} options - Query options
-     * @returns {Promise<Object>} Quizzes and total count
+     * Count quizzes by user ID with filters
      */
-    async findByFolderId(folderId, options = {}) {
-        const conditions = {
-            folder_id: folderId,
-            deleted_at: null
-        };
+    async countByUserId(userId, options = {}) {
+        try {
+            const {
+                folderId = null,
+                category = null,
+                status = 'active',
+                search = null
+            } = options;
 
-        // Get total count
-        const total = await this.count(conditions);
+            let query = `
+                SELECT COUNT(*) as total
+                FROM ${this.tableName}
+                WHERE user_id = ? AND deleted_at IS NULL
+            `;
+            const params = [userId];
 
-        // Get quizzes with pagination
-        const quizzes = await this.findAll(conditions, {
-            orderBy: 'updated_at',
-            orderDirection: 'DESC',
-            ...options
-        });
+            // Add filters
+            if (folderId) {
+                query += ' AND folder_id = ?';
+                params.push(folderId);
+            }
 
-        return { quizzes, total };
+            if (category) {
+                query += ' AND category = ?';
+                params.push(category);
+            }
+
+            if (status) {
+                query += ' AND status = ?';
+                params.push(status);
+            }
+
+            if (search && search.trim() !== '') {
+                query += ' AND (title LIKE ? OR topic LIKE ? OR description LIKE ?)';
+                const searchTerm = `%${search}%`;
+                params.push(searchTerm, searchTerm, searchTerm);
+            }
+
+            const results = await this.executeQuery(query, params);
+            return results[0].total;
+        } catch (error) {
+            throw this.handleDatabaseError(error);
+        }
     }
 
     /**
-     * Search quizzes by title or content
-     * @param {string} searchTerm - Search term
-     * @param {string} userId - User ID
-     * @param {Object} options - Query options
-     * @returns {Promise<Array>} Matching quizzes
+     * Find recent quizzes for user
      */
-    async search(searchTerm, userId, options = {}) {
-        const query = `
-      SELECT * FROM ${this.tableName} 
-      WHERE user_id = ? 
-      AND deleted_at IS NULL
-      AND (title LIKE ? OR JSON_EXTRACT(questions, '$[*].question') LIKE ?)
-      ORDER BY updated_at DESC
-      ${options.limit ? `LIMIT ${options.limit}` : ''}
-      ${options.offset ? `OFFSET ${options.offset}` : ''}
-    `;
+    async findRecentByUserId(userId, limit = 5) {
+        try {
+            const query = `
+                SELECT q.*, f.name as folder_name
+                FROM ${this.tableName} q
+                LEFT JOIN folders f ON q.folder_id = f.id
+                WHERE q.user_id = ? AND q.deleted_at IS NULL
+                ORDER BY q.updated_at DESC
+                LIMIT ?
+            `;
 
-        const searchPattern = `%${searchTerm}%`;
-        const params = [userId, searchPattern, searchPattern];
+            return await this.executeQuery(query, [userId, limit]);
+        } catch (error) {
+            throw this.handleDatabaseError(error);
+        }
+    }
 
-        return await this.execute(query, params);
+    /**
+     * Find quiz by ID and user ID (for ownership check)
+     */
+    async findByIdAndUserId(quizId, userId) {
+        try {
+            const query = `
+                SELECT q.*, f.name as folder_name
+                FROM ${this.tableName} q
+                LEFT JOIN folders f ON q.folder_id = f.id
+                WHERE q.id = ? AND q.user_id = ? AND q.deleted_at IS NULL
+            `;
+
+            const results = await this.executeQuery(query, [quizId, userId]);
+            return results.length > 0 ? results[0] : null;
+        } catch (error) {
+            throw this.handleDatabaseError(error);
+        }
+    }
+
+    /**
+     * Create quiz with questions
+     */
+    async createWithQuestions(quizData, questions) {
+        try {
+            return await this.withTransaction(async () => {
+                // Create quiz
+                const quiz = await this.create(quizData);
+
+                // Create questions
+                if (questions && questions.length > 0) {
+                    const questionInserts = questions.map(question => ({
+                        quiz_id: quiz.id,
+                        question_text: question.question || question.question_text,
+                        question_type: question.type || question.question_type || 'multiple_choice',
+                        options: JSON.stringify(question.options || []),
+                        correct_answer: question.correct_answer,
+                        explanation: question.explanation || null,
+                        points: question.points || 1,
+                        order_index: question.order_index || 0,
+                        created_at: new Date(),
+                        updated_at: new Date()
+                    }));
+
+                    await this.bulkCreateQuestions(questionInserts);
+                }
+
+                // Return complete quiz with questions
+                return await this.findWithQuestions(quiz.id);
+            });
+        } catch (error) {
+            throw this.handleDatabaseError(error);
+        }
+    }
+
+    /**
+     * Find quiz with questions
+     */
+    async findWithQuestions(quizId) {
+        try {
+            // Get quiz
+            const quiz = await this.findById(quizId);
+            if (!quiz) {
+                return null;
+            }
+
+            // Get questions
+            const questionsQuery = `
+                SELECT * FROM quiz_questions
+                WHERE quiz_id = ?
+                ORDER BY order_index ASC, id ASC
+            `;
+            const questions = await this.executeQuery(questionsQuery, [quizId]);
+
+            // Parse options from JSON
+            quiz.questions = questions.map(question => ({
+                ...question,
+                options: question.options ? JSON.parse(question.options) : []
+            }));
+
+            return quiz;
+        } catch (error) {
+            throw this.handleDatabaseError(error);
+        }
     }
 
     /**
      * Update quiz questions
-     * @param {string} quizId - Quiz ID
-     * @param {Array} questions - New questions
-     * @returns {Promise<boolean>} Success status
      */
     async updateQuestions(quizId, questions) {
-        const query = `
-      UPDATE ${this.tableName} 
-      SET questions = ?, updated_at = CURRENT_TIMESTAMP 
-      WHERE id = ? AND deleted_at IS NULL
-    `;
+        try {
+            return await this.withTransaction(async () => {
+                // Delete existing questions
+                await this.executeQuery('DELETE FROM quiz_questions WHERE quiz_id = ?', [quizId]);
 
-        const result = await this.execute(query, [JSON.stringify(questions), quizId]);
-        return result.affectedRows > 0;
+                // Insert new questions
+                if (questions && questions.length > 0) {
+                    const questionInserts = questions.map((question, index) => ({
+                        quiz_id: quizId,
+                        question_text: question.question || question.question_text,
+                        question_type: question.type || question.question_type || 'multiple_choice',
+                        options: JSON.stringify(question.options || []),
+                        correct_answer: question.correct_answer,
+                        explanation: question.explanation || null,
+                        points: question.points || 1,
+                        order_index: index,
+                        created_at: new Date(),
+                        updated_at: new Date()
+                    }));
+
+                    await this.bulkCreateQuestions(questionInserts);
+                }
+
+                // Update quiz's question count and updated_at
+                await this.update(quizId, {
+                    question_count: questions.length,
+                    updated_at: new Date()
+                });
+
+                return await this.findWithQuestions(quizId);
+            });
+        } catch (error) {
+            throw this.handleDatabaseError(error);
+        }
     }
 
     /**
      * Move quiz to folder
-     * @param {string} quizId - Quiz ID
-     * @param {string} folderId - Target folder ID
-     * @returns {Promise<boolean>} Success status
      */
-    async moveToFolder(quizId, folderId) {
-        return await this.update(quizId, { folder_id: folderId });
-    }
-
-    /**
-     * Rename quiz
-     * @param {string} quizId - Quiz ID
-     * @param {string} newTitle - New title
-     * @returns {Promise<boolean>} Success status
-     */
-    async rename(quizId, newTitle) {
-        return await this.update(quizId, { title: newTitle });
-    }
-
-    /**
-     * Check if title is duplicate for user
-     * @param {string} title - Quiz title
-     * @param {string} userId - User ID
-     * @param {string} excludeId - Quiz ID to exclude from check
-     * @returns {Promise<boolean>} Is duplicate
-     */
-    async isDuplicateTitle(title, userId, excludeId = null) {
-        let query = `
-      SELECT COUNT(*) as count FROM ${this.tableName} 
-      WHERE title = ? AND user_id = ? AND deleted_at IS NULL
-    `;
-        const params = [title, userId];
-
-        if (excludeId) {
-            query += ' AND id != ?';
-            params.push(excludeId);
-        }
-
-        const results = await this.execute(query, params);
-        return results[0].count > 0;
-    }
-
-    /**
-     * Get quiz statistics
-     * @param {string} quizId - Quiz ID
-     * @returns {Promise<Object>} Quiz statistics
-     */
-    async getStatistics(quizId) {
-        const quiz = await this.findById(quizId);
-        if (!quiz || quiz.deleted_at) return null;
-
-        const questions = JSON.parse(quiz.questions || '[]');
-
-        // Get view count from separate table if exists
-        const viewCountQuery = `
-      SELECT COUNT(*) as views 
-      FROM quiz_views 
-      WHERE quiz_id = ?
-    `;
-
-        let views = 0;
+    async moveToFolder(quizId, folderId, userId) {
         try {
-            const viewResults = await this.execute(viewCountQuery, [quizId]);
-            views = viewResults[0]?.views || 0;
-        } catch (error) {
-            // Table might not exist, use default
-            logger.debug('Quiz views table not found, using default value');
-        }
-
-        return {
-            totalQuestions: questions.length,
-            questionTypes: this.analyzeQuestionTypes(questions),
-            views: views,
-            createdAt: quiz.created_at,
-            updatedAt: quiz.updated_at,
-            lastAccessed: quiz.last_accessed
-        };
-    }
-
-    /**
-     * Count generations today for user
-     * @param {string} userId - User ID
-     * @param {Date} startOfDay - Start of day timestamp
-     * @returns {Promise<number>} Generation count
-     */
-    async countGenerationsToday(userId, startOfDay) {
-        const query = `
-      SELECT COUNT(*) as count FROM ${this.tableName} 
-      WHERE user_id = ? 
-      AND created_at >= ? 
-      AND deleted_at IS NULL
-      AND generation_source IN ('ai', 'file')
-    `;
-
-        const results = await this.execute(query, [userId, startOfDay]);
-        return results[0].count;
-    }
-
-    /**
-     * Check collaborator access
-     * @param {string} quizId - Quiz ID
-     * @param {string} userId - User ID
-     * @returns {Promise<boolean>} Has collaborator access
-     */
-    async checkCollaborator(quizId, userId) {
-        const query = `
-      SELECT COUNT(*) as count FROM quiz_collaborators 
-      WHERE quiz_id = ? AND user_id = ? AND status = 'active'
-    `;
-
-        try {
-            const results = await this.execute(query, [quizId, userId]);
-            return results[0].count > 0;
-        } catch (error) {
-            // Table might not exist yet
-            logger.debug('Quiz collaborators table not found');
-            return false;
-        }
-    }
-
-    /**
-     * Add quiz collaborator
-     * @param {string} quizId - Quiz ID
-     * @param {string} userId - User ID
-     * @param {string} permission - Permission level
-     * @returns {Promise<boolean>} Success status
-     */
-    async addCollaborator(quizId, userId, permission = 'edit') {
-        const query = `
-      INSERT INTO quiz_collaborators (quiz_id, user_id, permission, status, created_at) 
-      VALUES (?, ?, ?, 'active', CURRENT_TIMESTAMP)
-      ON DUPLICATE KEY UPDATE 
-      permission = VALUES(permission), 
-      status = VALUES(status),
-      updated_at = CURRENT_TIMESTAMP
-    `;
-
-        try {
-            const result = await this.execute(query, [quizId, userId, permission]);
-            return result.affectedRows > 0;
-        } catch (error) {
-            logger.error('Error adding collaborator:', error);
-            return false;
-        }
-    }
-
-    /**
-     * Remove quiz collaborator
-     * @param {string} quizId - Quiz ID
-     * @param {string} userId - User ID
-     * @returns {Promise<boolean>} Success status
-     */
-    async removeCollaborator(quizId, userId) {
-        const query = `
-      UPDATE quiz_collaborators 
-      SET status = 'removed', updated_at = CURRENT_TIMESTAMP 
-      WHERE quiz_id = ? AND user_id = ?
-    `;
-
-        try {
-            const result = await this.execute(query, [quizId, userId]);
-            return result.affectedRows > 0;
-        } catch (error) {
-            logger.error('Error removing collaborator:', error);
-            return false;
-        }
-    }
-
-    /**
-     * Get quiz with full details including collaborators
-     * @param {string} quizId - Quiz ID
-     * @returns {Promise<Object|null>} Quiz with details
-     */
-    async findWithDetails(quizId) {
-        const quiz = await this.findById(quizId);
-        if (!quiz || quiz.deleted_at) return null;
-
-        // Get collaborators
-        const collaboratorsQuery = `
-      SELECT qc.*, u.username, u.email, u.first_name, u.last_name
-      FROM quiz_collaborators qc
-      JOIN users u ON qc.user_id = u.id
-      WHERE qc.quiz_id = ? AND qc.status = 'active'
-    `;
-
-        let collaborators = [];
-        try {
-            collaborators = await this.execute(collaboratorsQuery, [quizId]);
-        } catch (error) {
-            logger.debug('Could not fetch collaborators:', error.message);
-        }
-
-        return {
-            ...quiz,
-            questions: JSON.parse(quiz.questions || '[]'),
-            collaborators
-        };
-    }
-
-    /**
-     * Update last accessed timestamp
-     * @param {string} quizId - Quiz ID
-     * @returns {Promise<boolean>} Success status
-     */
-    async updateLastAccessed(quizId) {
-        const query = `
-      UPDATE ${this.tableName} 
-      SET last_accessed = CURRENT_TIMESTAMP 
-      WHERE id = ? AND deleted_at IS NULL
-    `;
-
-        const result = await this.execute(query, [quizId]);
-        return result.affectedRows > 0;
-    }
-
-    /**
-     * Get quiz sharing settings
-     * @param {string} quizId - Quiz ID
-     * @returns {Promise<Object|null>} Sharing settings
-     */
-    async getSharingSettings(quizId) {
-        const query = `
-      SELECT is_public, share_token, share_expires_at, allow_anonymous
-      FROM ${this.tableName} 
-      WHERE id = ? AND deleted_at IS NULL
-    `;
-
-        const results = await this.execute(query, [quizId]);
-        return results.length > 0 ? results[0] : null;
-    }
-
-    /**
-     * Generate share token for quiz
-     * @param {string} quizId - Quiz ID
-     * @param {Date} expiresAt - Expiration date
-     * @returns {Promise<string>} Share token
-     */
-    async generateShareToken(quizId, expiresAt = null) {
-        const shareToken = this.generateRandomToken();
-
-        const query = `
-      UPDATE ${this.tableName} 
-      SET share_token = ?, share_expires_at = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ? AND deleted_at IS NULL
-    `;
-
-        const result = await this.execute(query, [shareToken, expiresAt, quizId]);
-
-        if (result.affectedRows > 0) {
-            return shareToken;
-        }
-
-        throw new Error('Failed to generate share token');
-    }
-
-    /**
-     * Find quiz by share token
-     * @param {string} shareToken - Share token
-     * @returns {Promise<Object|null>} Quiz if valid token
-     */
-    async findByShareToken(shareToken) {
-        const query = `
-      SELECT * FROM ${this.tableName} 
-      WHERE share_token = ? 
-      AND deleted_at IS NULL
-      AND (share_expires_at IS NULL OR share_expires_at > CURRENT_TIMESTAMP)
-    `;
-
-        const results = await this.execute(query, [shareToken]);
-        return results.length > 0 ? results[0] : null;
-    }
-
-    /**
-     * Analyze question types in questions array
-     * @param {Array} questions - Questions array
-     * @returns {Object} Question type analysis
-     */
-    analyzeQuestionTypes(questions) {
-        const types = {};
-        questions.forEach(question => {
-            const type = question.type || 'multiple_choice';
-            types[type] = (types[type] || 0) + 1;
-        });
-        return types;
-    }
-
-    /**
-     * Get recent quizzes for user
-     * @param {string} userId - User ID
-     * @param {number} limit - Number of recent quizzes
-     * @returns {Promise<Array>} Recent quizzes
-     */
-    async getRecentQuizzes(userId, limit = 10) {
-        return await this.findByUserId(userId, {
-            limit,
-            orderBy: 'updated_at',
-            orderDirection: 'DESC'
-        });
-    }
-
-    /**
-     * Export quiz data
-     * @param {string} quizId - Quiz ID
-     * @returns {Promise<Object>} Export data
-     */
-    async getExportData(quizId) {
-        const quiz = await this.findWithDetails(quizId);
-        if (!quiz) return null;
-
-        return {
-            id: quiz.id,
-            title: quiz.title,
-            description: quiz.description,
-            questions: quiz.questions,
-            metadata: {
-                createdAt: quiz.created_at,
-                updatedAt: quiz.updated_at,
-                questionCount: quiz.questions.length,
-                estimatedTime: this.calculateEstimatedTime(quiz.questions),
-                difficulty: quiz.difficulty,
-                category: quiz.category,
-                tags: quiz.tags
+            // Verify quiz ownership
+            const quiz = await this.findByIdAndUserId(quizId, userId);
+            if (!quiz) {
+                throw new NotFoundError('ไม่พบข้อสอบหรือไม่มีสิทธิ์เข้าถึง');
             }
-        };
-    }
 
-    /**
-     * Calculate estimated completion time
-     * @param {Array} questions - Questions array
-     * @returns {number} Time in minutes
-     */
-    calculateEstimatedTime(questions) {
-        const timePerQuestion = {
-            'multiple_choice': 1.5,
-            'true_false': 1,
-            'short_answer': 3,
-            'essay': 10
-        };
+            // Verify folder ownership if folderId is provided
+            if (folderId) {
+                const folderQuery = `
+                    SELECT id FROM folders 
+                    WHERE id = ? AND user_id = ? AND deleted_at IS NULL
+                `;
+                const folderResults = await this.executeQuery(folderQuery, [folderId, userId]);
+                
+                if (folderResults.length === 0) {
+                    throw new NotFoundError('ไม่พบโฟลเดอร์หรือไม่มีสิทธิ์เข้าถึง');
+                }
+            }
 
-        let totalTime = 0;
-        questions.forEach(question => {
-            const type = question.type || 'multiple_choice';
-            totalTime += timePerQuestion[type] || 2;
-        });
-
-        return Math.ceil(totalTime);
-    }
-
-    /**
-     * Generate random token
-     * @returns {string} Random token
-     */
-    generateRandomToken() {
-        return Math.random().toString(36).substring(2, 15) +
-            Math.random().toString(36).substring(2, 15);
-    }
-
-    /**
-     * Get quiz usage analytics
-     * @param {string} userId - User ID
-     * @param {Object} dateRange - Date range filter
-     * @returns {Promise<Object>} Usage analytics
-     */
-    async getUsageAnalytics(userId, dateRange = {}) {
-        const { startDate, endDate } = dateRange;
-
-        let whereClause = 'WHERE user_id = ? AND deleted_at IS NULL';
-        const params = [userId];
-
-        if (startDate) {
-            whereClause += ' AND created_at >= ?';
-            params.push(startDate);
-        }
-
-        if (endDate) {
-            whereClause += ' AND created_at <= ?';
-            params.push(endDate);
-        }
-
-        const query = `
-      SELECT 
-        COUNT(*) as total_quizzes,
-        COUNT(CASE WHEN generation_source = 'ai' THEN 1 END) as ai_generated,
-        COUNT(CASE WHEN generation_source = 'manual' THEN 1 END) as manually_created,
-        AVG(JSON_LENGTH(questions)) as avg_questions_per_quiz,
-        COUNT(CASE WHEN is_public = 1 THEN 1 END) as public_quizzes
-      FROM ${this.tableName}
-      ${whereClause}
-    `;
-
-        const results = await this.execute(query, params);
-        return results[0];
-    }
-
-    /**
-     * Bulk update quiz folder
-     * @param {Array} quizIds - Array of quiz IDs
-     * @param {string} folderId - Target folder ID
-     * @param {string} userId - User ID (for permission check)
-     * @returns {Promise<number>} Number of updated quizzes
-     */
-    async bulkMoveToFolder(quizIds, folderId, userId) {
-        if (!quizIds || quizIds.length === 0) {
-            return 0;
-        }
-
-        const placeholders = quizIds.map(() => '?').join(',');
-        const query = `
-      UPDATE ${this.tableName} 
-      SET folder_id = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id IN (${placeholders}) 
-      AND user_id = ? 
-      AND deleted_at IS NULL
-    `;
-
-        const params = [folderId, ...quizIds, userId];
-        const result = await this.execute(query, params);
-
-        return result.affectedRows;
-    }
-
-    /**
-     * Health check specific to quiz repository
-     * @returns {Promise<Object>} Health status
-     */
-    async healthCheck() {
-        try {
-            const baseHealth = await super.healthCheck();
-
-            // Additional quiz-specific checks
-            const quizCount = await this.count();
-            const recentQuizzes = await this.execute(`
-        SELECT COUNT(*) as count 
-        FROM ${this.tableName} 
-        WHERE created_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)
-        AND deleted_at IS NULL
-      `);
-
-            return {
-                ...baseHealth,
-                totalQuizzes: quizCount,
-                recentQuizzes: recentQuizzes[0].count,
-                tableName: this.tableName
-            };
+            // Update quiz folder
+            return await this.update(quizId, { 
+                folder_id: folderId,
+                updated_at: new Date()
+            });
         } catch (error) {
-            return {
-                status: 'unhealthy',
-                error: error.message,
-                tableName: this.tableName,
-                timestamp: new Date().toISOString()
-            };
+            throw this.handleDatabaseError(error);
+        }
+    }
+
+    /**
+     * Search quizzes
+     */
+    async searchQuizzes(searchTerm, userId, options = {}) {
+        try {
+            const {
+                category = null,
+                folderId = null,
+                limit = 50,
+                offset = 0
+            } = options;
+
+            let query = `
+                SELECT q.*, f.name as folder_name,
+                       MATCH(q.title, q.topic, q.description) AGAINST(? IN NATURAL LANGUAGE MODE) as relevance
+                FROM ${this.tableName} q
+                LEFT JOIN folders f ON q.folder_id = f.id
+                WHERE q.user_id = ? AND q.deleted_at IS NULL
+                AND (
+                    MATCH(q.title, q.topic, q.description) AGAINST(? IN NATURAL LANGUAGE MODE)
+                    OR q.title LIKE ?
+                    OR q.topic LIKE ?
+                    OR q.description LIKE ?
+                )
+            `;
+
+            const searchPattern = `%${searchTerm}%`;
+            const params = [searchTerm, userId, searchTerm, searchPattern, searchPattern, searchPattern];
+
+            // Add filters
+            if (category) {
+                query += ' AND q.category = ?';
+                params.push(category);
+            }
+
+            if (folderId) {
+                query += ' AND q.folder_id = ?';
+                params.push(folderId);
+            }
+
+            // Order by relevance and date
+            query += ' ORDER BY relevance DESC, q.updated_at DESC';
+
+            // Add pagination
+            if (limit) {
+                query += ' LIMIT ?';
+                params.push(limit);
+                
+                if (offset > 0) {
+                    query += ' OFFSET ?';
+                    params.push(offset);
+                }
+            }
+
+            return await this.executeQuery(query, params);
+        } catch (error) {
+            throw this.handleDatabaseError(error);
+        }
+    }
+
+    /**
+     * Get quiz statistics for user
+     */
+    async getUserQuizStatistics(userId) {
+        try {
+            const query = `
+                SELECT 
+                    COUNT(*) as total_quizzes,
+                    COUNT(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 END) as this_week,
+                    COUNT(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1 END) as this_month,
+                    AVG(question_count) as avg_questions,
+                    MAX(created_at) as last_created
+                FROM ${this.tableName}
+                WHERE user_id = ? AND deleted_at IS NULL
+            `;
+
+            const results = await this.executeQuery(query, [userId]);
+            return results[0];
+        } catch (error) {
+            throw this.handleDatabaseError(error);
+        }
+    }
+
+    /**
+     * Duplicate quiz
+     */
+    async duplicateQuiz(quizId, userId, newTitle = null) {
+        try {
+            return await this.withTransaction(async () => {
+                // Get original quiz with questions
+                const originalQuiz = await this.findWithQuestions(quizId);
+                if (!originalQuiz || originalQuiz.user_id !== userId) {
+                    throw new NotFoundError('ไม่พบข้อสอบหรือไม่มีสิทธิ์เข้าถึง');
+                }
+
+                // Create new quiz data
+                const newQuizData = {
+                    title: newTitle || `${originalQuiz.title} (Copy)`,
+                    topic: originalQuiz.topic,
+                    description: originalQuiz.description,
+                    category: originalQuiz.category,
+                    question_type: originalQuiz.question_type,
+                    question_count: originalQuiz.question_count,
+                    difficulty_level: originalQuiz.difficulty_level,
+                    time_limit: originalQuiz.time_limit,
+                    user_id: userId,
+                    folder_id: originalQuiz.folder_id,
+                    status: 'draft',
+                    created_at: new Date(),
+                    updated_at: new Date()
+                };
+
+                // Create new quiz
+                const newQuiz = await this.create(newQuizData);
+
+                // Copy questions
+                if (originalQuiz.questions && originalQuiz.questions.length > 0) {
+                    const newQuestions = originalQuiz.questions.map((question, index) => ({
+                        quiz_id: newQuiz.id,
+                        question_text: question.question_text,
+                        question_type: question.question_type,
+                        options: JSON.stringify(question.options),
+                        correct_answer: question.correct_answer,
+                        explanation: question.explanation,
+                        points: question.points,
+                        order_index: index,
+                        created_at: new Date(),
+                        updated_at: new Date()
+                    }));
+
+                    await this.bulkCreateQuestions(newQuestions);
+                }
+
+                return await this.findWithQuestions(newQuiz.id);
+            });
+        } catch (error) {
+            throw this.handleDatabaseError(error);
+        }
+    }
+
+    /**
+     * Bulk operations
+     */
+    async bulkDelete(quizIds, userId) {
+        try {
+            if (!Array.isArray(quizIds) || quizIds.length === 0) {
+                return { deleted: 0 };
+            }
+
+            return await this.withTransaction(async () => {
+                // Verify ownership
+                const placeholders = quizIds.map(() => '?').join(',');
+                const verifyQuery = `
+                    SELECT id FROM ${this.tableName}
+                    WHERE id IN (${placeholders}) AND user_id = ? AND deleted_at IS NULL
+                `;
+                
+                const ownedQuizzes = await this.executeQuery(verifyQuery, [...quizIds, userId]);
+                const ownedIds = ownedQuizzes.map(quiz => quiz.id);
+
+                if (ownedIds.length === 0) {
+                    return { deleted: 0 };
+                }
+
+                // Soft delete quizzes
+                const deleteQuery = `
+                    UPDATE ${this.tableName}
+                    SET deleted_at = NOW(), updated_at = NOW()
+                    WHERE id IN (${ownedIds.map(() => '?').join(',')})
+                `;
+                
+                await this.executeQuery(deleteQuery, ownedIds);
+
+                return { deleted: ownedIds.length };
+            });
+        } catch (error) {
+            throw this.handleDatabaseError(error);
+        }
+    }
+
+    /**
+     * Check title availability for user
+     */
+    async isTitleAvailable(title, userId, excludeQuizId = null) {
+        try {
+            let query = `
+                SELECT COUNT(*) as count
+                FROM ${this.tableName}
+                WHERE title = ? AND user_id = ? AND deleted_at IS NULL
+            `;
+            const params = [title, userId];
+
+            if (excludeQuizId) {
+                query += ' AND id != ?';
+                params.push(excludeQuizId);
+            }
+
+            const results = await this.executeQuery(query, params);
+            return results[0].count === 0;
+        } catch (error) {
+            throw this.handleDatabaseError(error);
+        }
+    }
+
+    /**
+     * Private helper methods
+     */
+
+    /**
+     * Bulk create questions
+     */
+    async bulkCreateQuestions(questions) {
+        if (!Array.isArray(questions) || questions.length === 0) {
+            return [];
+        }
+
+        try {
+            const fields = Object.keys(questions[0]);
+            const placeholders = fields.map(() => '?').join(',');
+            const valueClause = questions.map(() => `(${placeholders})`).join(',');
+
+            const query = `
+                INSERT INTO quiz_questions (${fields.join(',')})
+                VALUES ${valueClause}
+            `;
+
+            const flatValues = questions.flatMap(question => Object.values(question));
+            
+            return await this.executeQuery(query, flatValues);
+        } catch (error) {
+            throw this.handleDatabaseError(error);
         }
     }
 }
-
-export default QuizRepository;

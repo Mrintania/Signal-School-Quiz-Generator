@@ -1,570 +1,650 @@
 // backend/src/services/ai/GeminiService.js
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import logger from '../../utils/logger.js';
-import { AIServiceError } from '../../errors/CustomErrors.js';
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
+import logger from '../../utils/common/Logger.js';
+import { AIServiceError, ValidationError } from '../../errors/CustomErrors.js';
 
 /**
  * Gemini AI Service
- * จัดการการเชื่อมต่อและการใช้งาน Google Gemini AI
+ * จัดการการเชื่อมต่อและใช้งาน Google Gemini AI
+ * สำหรับสร้างข้อสอบและประมวลผลเนื้อหา
  */
 export class GeminiService {
-    constructor() {
-        // Initialize Gemini AI
-        this.apiKey = process.env.GEMINI_API_KEY;
-        this.modelName = process.env.GEMINI_MODEL || 'gemini-pro';
-
-        if (!this.apiKey) {
-            throw new Error('GEMINI_API_KEY environment variable is required');
-        }
-
-        this.genAI = new GoogleGenerativeAI(this.apiKey);
-        this.model = this.genAI.getGenerativeModel({ model: this.modelName });
-
+    constructor(config = {}) {
         // Configuration
         this.config = {
-            maxRetries: 3,
-            timeoutMs: 60000, // 60 seconds
-            maxTokens: 8192,
-            temperature: 0.7,
-            topP: 0.8,
-            topK: 40,
-            safetySettings: [
-                {
-                    category: 'HARM_CATEGORY_HARASSMENT',
-                    threshold: 'BLOCK_MEDIUM_AND_ABOVE'
-                },
-                {
-                    category: 'HARM_CATEGORY_HATE_SPEECH',
-                    threshold: 'BLOCK_MEDIUM_AND_ABOVE'
-                },
-                {
-                    category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT',
-                    threshold: 'BLOCK_MEDIUM_AND_ABOVE'
-                },
-                {
-                    category: 'HARM_CATEGORY_DANGEROUS_CONTENT',
-                    threshold: 'BLOCK_MEDIUM_AND_ABOVE'
-                }
-            ]
+            apiKey: config.apiKey || process.env.GEMINI_API_KEY,
+            model: config.model || 'gemini-1.5-flash',
+            maxRetries: config.maxRetries || 3,
+            retryDelay: config.retryDelay || 2000,
+            timeout: config.timeout || 60000,
+            maxTokens: config.maxTokens || 8192,
+            temperature: config.temperature || 0.7,
+            topP: config.topP || 0.8,
+            topK: config.topK || 40,
+            ...config
         };
 
-        // Rate limiting
-        this.requestCount = 0;
-        this.lastResetTime = Date.now();
-        this.rateLimit = {
-            requestsPerMinute: 20,
-            requestsPerHour: 300
-        };
+        // Validate API key
+        if (!this.config.apiKey) {
+            throw new Error('GEMINI_API_KEY is required');
+        }
 
-        // Request queue for handling rate limits
-        this.requestQueue = [];
-        this.isProcessingQueue = false;
+        // Initialize Gemini client
+        this.genAI = new GoogleGenerativeAI(this.config.apiKey);
+        this.model = null;
+        this.isHealthy = false;
+
+        // Initialize the service
+        this.initialize();
     }
 
     /**
-     * Generate quiz content using Gemini AI
-     * @param {string} prompt - The prompt for quiz generation
-     * @returns {string} Generated quiz content
+     * Initialize Gemini service
      */
-    async generateQuiz(prompt) {
-        const startTime = Date.now();
-
+    async initialize() {
         try {
-            // Validate prompt
-            if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
-                throw new AIServiceError('Invalid prompt provided');
-            }
+            // Configure safety settings
+            const safetySettings = [
+                {
+                    category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+                    threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+                },
+                {
+                    category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                    threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+                },
+                {
+                    category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+                    threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+                },
+                {
+                    category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                    threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+                }
+            ];
 
-            if (prompt.length > 10000) {
-                throw new AIServiceError('Prompt too long. Maximum 10,000 characters allowed.');
-            }
-
-            // Check rate limits
-            await this.checkRateLimit();
-
-            // Prepare generation config
+            // Configure generation settings
             const generationConfig = {
                 temperature: this.config.temperature,
                 topP: this.config.topP,
                 topK: this.config.topK,
                 maxOutputTokens: this.config.maxTokens,
+                responseMimeType: "text/plain",
             };
 
-            // Log request
-            logger.logAI('quiz_generation_request', this.modelName, prompt, null);
+            // Initialize model
+            this.model = this.genAI.getGenerativeModel({
+                model: this.config.model,
+                safetySettings,
+                generationConfig
+            });
+
+            // Test connection
+            await this.healthCheck();
+
+            logger.aiService('gemini', 'initialized', {
+                model: this.config.model,
+                isHealthy: this.isHealthy
+            });
+
+        } catch (error) {
+            logger.errorWithContext(error, {
+                operation: 'initialize',
+                service: 'gemini'
+            });
+            throw new AIServiceError('Failed to initialize Gemini service: ' + error.message);
+        }
+    }
+
+    /**
+     * Generate content using Gemini AI
+     */
+    async generateContent(prompt, options = {}) {
+        try {
+            if (!this.model) {
+                throw new AIServiceError('Gemini service not initialized');
+            }
+
+            const {
+                maxRetries = this.config.maxRetries,
+                timeout = this.config.timeout,
+                temperature = this.config.temperature
+            } = options;
+
+            // Validate prompt
+            this.validatePrompt(prompt);
+
+            // Log generation request
+            logger.aiService('gemini', 'generate-request', {
+                promptLength: prompt.length,
+                temperature,
+                timeout
+            });
+
+            // Generate content with retry mechanism
+            const result = await this.generateWithRetry(prompt, maxRetries, options);
+
+            // Log success
+            logger.aiService('gemini', 'generate-success', {
+                responseLength: result.response.text().length,
+                finishReason: result.response.candidates?.[0]?.finishReason
+            });
+
+            return result;
+
+        } catch (error) {
+            logger.errorWithContext(error, {
+                operation: 'generateContent',
+                service: 'gemini',
+                promptLength: prompt?.length || 0
+            });
+
+            throw this.handleGeminiError(error);
+        }
+    }
+
+    /**
+     * Generate content with streaming
+     */
+    async generateContentStream(prompt, onChunk, options = {}) {
+        try {
+            if (!this.model) {
+                throw new AIServiceError('Gemini service not initialized');
+            }
+
+            // Validate prompt
+            this.validatePrompt(prompt);
+
+            logger.aiService('gemini', 'stream-request', {
+                promptLength: prompt.length
+            });
+
+            // Generate streaming content
+            const result = await this.model.generateContentStream(prompt);
+
+            let fullResponse = '';
+
+            for await (const chunk of result.stream) {
+                const chunkText = chunk.text();
+                fullResponse += chunkText;
+
+                // Call chunk handler
+                if (onChunk) {
+                    await onChunk(chunkText, fullResponse);
+                }
+            }
+
+            logger.aiService('gemini', 'stream-success', {
+                totalLength: fullResponse.length
+            });
+
+            return {
+                response: {
+                    text: () => fullResponse,
+                    candidates: result.response?.candidates
+                }
+            };
+
+        } catch (error) {
+            logger.errorWithContext(error, {
+                operation: 'generateContentStream',
+                service: 'gemini'
+            });
+
+            throw this.handleGeminiError(error);
+        }
+    }
+
+    /**
+     * Generate quiz from content
+     */
+    async generateQuiz(content, options = {}) {
+        try {
+            const {
+                questionType = 'multiple_choice',
+                questionCount = 10,
+                difficulty = 'medium',
+                subject = '',
+                language = 'th',
+                includeExplanations = false
+            } = options;
+
+            // Build quiz generation prompt
+            const prompt = this.buildQuizPrompt(content, {
+                questionType,
+                questionCount,
+                difficulty,
+                subject,
+                language,
+                includeExplanations
+            });
 
             // Generate content
-            const result = await this.model.generateContent({
-                contents: [{ role: 'user', parts: [{ text: prompt }] }],
-                generationConfig,
-                safetySettings: this.config.safetySettings
-            });
+            const result = await this.generateContent(prompt, options);
 
-            const response = await result.response;
-            const generatedText = response.text();
+            // Parse and validate response
+            const quizData = this.parseQuizResponse(result.response.text());
 
-            // Validate response
-            if (!generatedText || generatedText.trim().length === 0) {
-                throw new AIServiceError('Empty response from AI service');
-            }
-
-            // Check for safety blocks
-            if (response.promptFeedback?.blockReason) {
-                throw new AIServiceError(`Content blocked: ${response.promptFeedback.blockReason}`);
-            }
-
-            const duration = Date.now() - startTime;
-
-            // Log successful response
-            logger.logAI('quiz_generation_success', this.modelName, prompt, generatedText, duration);
-
-            // Update request count
-            this.incrementRequestCount();
-
-            return generatedText;
-
-        } catch (error) {
-            const duration = Date.now() - startTime;
-
-            // Log error
-            logger.logAI('quiz_generation_error', this.modelName, prompt, null, duration);
-            logger.error('Gemini AI generation error:', {
-                error: error.message,
-                promptLength: prompt ? prompt.length : 0,
-                duration
-            });
-
-            // Handle specific errors
-            if (error.message.includes('quota')) {
-                throw new AIServiceError('AI service quota exceeded. Please try again later.', error);
-            }
-
-            if (error.message.includes('safety')) {
-                throw new AIServiceError('Content blocked by safety filters. Please modify your input.', error);
-            }
-
-            if (error.message.includes('timeout')) {
-                throw new AIServiceError('AI service timeout. Please try again.', error);
-            }
-
-            // Generic AI service error
-            if (error instanceof AIServiceError) {
-                throw error;
-            }
-
-            throw new AIServiceError(`AI service error: ${error.message}`, error);
-        }
-    }
-
-    /**
-     * Generate questions based on existing content
-     * @param {string} content - Content to base questions on
-     * @param {Object} options - Generation options
-     * @returns {string} Generated questions
-     */
-    async generateQuestions(content, options = {}) {
-        const {
-            questionType = 'multiple_choice',
-            numberOfQuestions = 5,
-            difficulty = 'medium',
-            language = 'th'
-        } = options;
-
-        const prompt = this.buildQuestionPrompt(content, {
-            questionType,
-            numberOfQuestions,
-            difficulty,
-            language
-        });
-
-        return await this.generateQuiz(prompt);
-    }
-
-    /**
-     * Improve existing questions
-     * @param {Array} questions - Existing questions
-     * @param {Object} options - Improvement options
-     * @returns {string} Improved questions
-     */
-    async improveQuestions(questions, options = {}) {
-        const {
-            improvementType = 'clarity',
-            language = 'th'
-        } = options;
-
-        const prompt = this.buildImprovementPrompt(questions, {
-            improvementType,
-            language
-        });
-
-        return await this.generateQuiz(prompt);
-    }
-
-    /**
-     * Generate quiz rubric/answer key
-     * @param {Array} questions - Quiz questions
-     * @param {Object} options - Rubric options
-     * @returns {string} Generated rubric
-     */
-    async generateRubric(questions, options = {}) {
-        const { language = 'th', includeExplanations = true } = options;
-
-        const prompt = this.buildRubricPrompt(questions, {
-            language,
-            includeExplanations
-        });
-
-        return await this.generateQuiz(prompt);
-    }
-
-    /**
-     * Check AI service health
-     * @returns {Object} Health status
-     */
-    async healthCheck() {
-        try {
-            const startTime = Date.now();
-
-            // Simple test prompt
-            const testPrompt = "Please respond with exactly: 'Health check successful'";
-
-            const result = await this.model.generateContent({
-                contents: [{ role: 'user', parts: [{ text: testPrompt }] }],
-                generationConfig: {
-                    temperature: 0,
-                    maxOutputTokens: 20
+            return {
+                quiz: quizData,
+                metadata: {
+                    model: this.config.model,
+                    generatedAt: new Date().toISOString(),
+                    prompt: {
+                        questionType,
+                        questionCount,
+                        difficulty,
+                        subject
+                    }
                 }
-            });
-
-            const response = await result.response;
-            const responseText = response.text();
-            const responseTime = Date.now() - startTime;
-
-            const isHealthy = responseText.includes('Health check successful');
-
-            return {
-                status: isHealthy ? 'healthy' : 'degraded',
-                responseTime: `${responseTime}ms`,
-                model: this.modelName,
-                apiVersion: 'v1',
-                rateLimit: {
-                    requestsPerMinute: this.rateLimit.requestsPerMinute,
-                    currentCount: this.requestCount
-                },
-                lastChecked: new Date().toISOString()
             };
 
         } catch (error) {
-            logger.error('Gemini health check failed:', error);
-
-            return {
-                status: 'unhealthy',
-                error: error.message,
-                model: this.modelName,
-                lastChecked: new Date().toISOString()
-            };
+            throw this.handleGeminiError(error);
         }
     }
 
     /**
-     * Get model information
-     * @returns {Object} Model information
+     * Analyze content difficulty
      */
-    getModelInfo() {
-        return {
-            name: this.modelName,
-            provider: 'Google',
-            version: 'v1',
-            capabilities: [
-                'text_generation',
-                'quiz_creation',
-                'content_analysis',
-                'multilingual_support'
-            ],
-            limits: {
-                maxTokens: this.config.maxTokens,
-                maxPromptLength: 10000
-            }
-        };
-    }
+    async analyzeDifficulty(content) {
+        try {
+            const prompt = this.buildDifficultyAnalysisPrompt(content);
 
-    /**
-     * Estimate token count for text
-     * @param {string} text - Text to estimate
-     * @returns {number} Estimated token count
-     */
-    estimateTokenCount(text) {
-        if (!text) return 0;
+            const result = await this.generateContent(prompt);
 
-        // Rough estimation: 1 token ≈ 4 characters for English, 1 token ≈ 2 characters for Thai
-        const hasThaiChars = /[\u0E00-\u0E7F]/.test(text);
-        const ratio = hasThaiChars ? 2 : 4;
+            return this.parseDifficultyResponse(result.response.text());
 
-        return Math.ceil(text.length / ratio);
-    }
-
-    /**
-     * Check if request is within rate limits
-     */
-    async checkRateLimit() {
-        const now = Date.now();
-        const timeSinceReset = now - this.lastResetTime;
-
-        // Reset counter every minute
-        if (timeSinceReset >= 60000) {
-            this.requestCount = 0;
-            this.lastResetTime = now;
-        }
-
-        // Check if we're over the rate limit
-        if (this.requestCount >= this.rateLimit.requestsPerMinute) {
-            const waitTime = 60000 - timeSinceReset;
-
-            logger.warn('Rate limit reached, waiting...', {
-                currentCount: this.requestCount,
-                limit: this.rateLimit.requestsPerMinute,
-                waitTime
-            });
-
-            // Wait until rate limit resets
-            await new Promise(resolve => setTimeout(resolve, waitTime));
-
-            // Reset after waiting
-            this.requestCount = 0;
-            this.lastResetTime = Date.now();
+        } catch (error) {
+            throw this.handleGeminiError(error);
         }
     }
 
     /**
-     * Increment request count
+     * Extract key concepts from content
      */
-    incrementRequestCount() {
-        this.requestCount++;
-    }
+    async extractConcepts(content, maxConcepts = 10) {
+        try {
+            const prompt = `
+วิเคราะห์เนื้อหาต่อไปนี้และสกัดแนวคิดหลักออกมา:
 
-    /**
-     * Build prompt for quiz generation
-     * @param {string} content - Base content
-     * @param {Object} options - Generation options
-     * @returns {string} Generated prompt
-     */
-    buildQuestionPrompt(content, options) {
-        const {
-            questionType,
-            numberOfQuestions,
-            difficulty,
-            language
-        } = options;
-
-        const languageInstructions = language === 'th'
-            ? 'โปรดตอบเป็นภาษาไทย'
-            : 'Please respond in English';
-
-        const typeInstructions = {
-            multiple_choice: language === 'th'
-                ? 'สร้างคำถามแบบเลือกตอบ 4 ตัวเลือก พร้อมระบุคำตอบที่ถูกต้อง'
-                : 'Create multiple choice questions with 4 options and indicate the correct answer',
-            true_false: language === 'th'
-                ? 'สร้างคำถามแบบถูก/ผิด พร้อมระบุคำตอบที่ถูกต้อง'
-                : 'Create true/false questions with correct answers',
-            essay: language === 'th'
-                ? 'สร้างคำถามแบบเรียงความ พร้อมแนวทางการตอบ'
-                : 'Create essay questions with answer guidelines',
-            short_answer: language === 'th'
-                ? 'สร้างคำถามแบบตอบสั้น พร้อมคำตอบที่เป็นไปได้'
-                : 'Create short answer questions with possible answers'
-        };
-
-        const difficultyInstructions = {
-            easy: language === 'th' ? 'ระดับง่าย' : 'Easy level',
-            medium: language === 'th' ? 'ระดับปานกลาง' : 'Medium level',
-            hard: language === 'th' ? 'ระดับยาก' : 'Hard level'
-        };
-
-        return `
-${languageInstructions}
-
-สร้างข้อสอบจากเนื้อหาต่อไปนี้:
 ${content}
 
-ข้อกำหนด:
-- จำนวนคำถาม: ${numberOfQuestions} ข้อ
-- ประเภทคำถาม: ${typeInstructions[questionType]}
-- ระดับความยาก: ${difficultyInstructions[difficulty]}
-
-โปรดส่งคืนข้อมูลในรูปแบบ JSON ดังนี้:
+กรุณาระบุแนวคิดหลักสูงสุด ${maxConcepts} แนวคิด ในรูปแบบ JSON:
 {
-  "title": "ชื่อข้อสอบ",
-  "questions": [
+  "concepts": [
     {
-      "question": "ข้อความคำถาม",
-      "type": "${questionType}",
-      ${questionType === 'multiple_choice' ? '"options": ["ตัวเลือก1", "ตัวเลือก2", "ตัวเลือก3", "ตัวเลือก4"],' : ''}
-      "correctAnswer": ${questionType === 'multiple_choice' ? '0' : questionType === 'true_false' ? 'true' : '"ตัวอย่างคำตอบ"'}
+      "name": "ชื่อแนวคิด",
+      "description": "คำอธิบายสั้นๆ",
+      "importance": "high|medium|low",
+      "category": "หมวดหมู่"
     }
   ]
 }
+            `.trim();
 
-กรุณาตรวจสอบให้แน่ใจว่า JSON ถูกต้องและสามารถ parse ได้`;
+            const result = await this.generateContent(prompt);
+
+            return this.parseConceptsResponse(result.response.text());
+
+        } catch (error) {
+            throw this.handleGeminiError(error);
+        }
     }
 
     /**
-     * Build prompt for question improvement
-     * @param {Array} questions - Questions to improve
-     * @param {Object} options - Improvement options
-     * @returns {string} Generated prompt
+     * Summarize content
      */
-    buildImprovementPrompt(questions, options) {
-        const { improvementType, language } = options;
-
-        const languageInstructions = language === 'th'
-            ? 'โปรดตอบเป็นภาษาไทย'
-            : 'Please respond in English';
-
-        const improvementInstructions = {
-            clarity: language === 'th'
-                ? 'ปรับปรุงความชัดเจนของคำถาม'
-                : 'Improve question clarity',
-            difficulty: language === 'th'
-                ? 'ปรับระดับความยากของคำถาม'
-                : 'Adjust question difficulty',
-            grammar: language === 'th'
-                ? 'แก้ไขไวยากรณ์และการใช้ภาษา'
-                : 'Fix grammar and language usage'
-        };
-
-        return `
-${languageInstructions}
-
-กรุณา${improvementInstructions[improvementType]}สำหรับคำถามต่อไปนี้:
-
-${JSON.stringify(questions, null, 2)}
-
-โปรดส่งคืนคำถามที่ปรับปรุงแล้วในรูปแบบ JSON เดิม`;
-    }
-
-    /**
-     * Build prompt for rubric generation
-     * @param {Array} questions - Quiz questions
-     * @param {Object} options - Rubric options
-     * @returns {string} Generated prompt
-     */
-    buildRubricPrompt(questions, options) {
-        const { language, includeExplanations } = options;
-
-        const languageInstructions = language === 'th'
-            ? 'โปรดตอบเป็นภาษาไทย'
-            : 'Please respond in English';
-
-        const explanationNote = includeExplanations
-            ? (language === 'th' ? 'พร้อมคำอธิบาย' : 'with explanations')
-            : (language === 'th' ? 'โดยไม่ต้องมีคำอธิบาย' : 'without explanations');
-
-        return `
-${languageInstructions}
-
-สร้างเฉลยข้อสอบ ${explanationNote} สำหรับคำถามต่อไปนี้:
-
-${JSON.stringify(questions, null, 2)}
-
-โปรดส่งคืนในรูปแบบ JSON:
-{
-  "rubric": [
-    {
-      "questionNumber": 1,
-      "correctAnswer": "คำตอบที่ถูกต้อง",
-      ${includeExplanations ? '"explanation": "คำอธิบาย",' : ''}
-      "points": 1
-    }
-  ],
-  "totalPoints": จำนวนคะแนนรวม
-}`;
-    }
-
-    /**
-     * Validate AI response format
-     * @param {string} response - AI response
-     * @returns {Object} Validation result
-     */
-    validateResponse(response) {
+    async summarizeContent(content, maxLength = 200) {
         try {
-            const parsed = JSON.parse(response);
+            const prompt = `
+สรุปเนื้อหาต่อไปนี้ให้สั้นและกระชับ ไม่เกิน ${maxLength} คำ:
 
-            // Basic structure validation
-            if (!parsed.title || !parsed.questions || !Array.isArray(parsed.questions)) {
-                return {
-                    isValid: false,
-                    error: 'Invalid response structure'
-                };
-            }
+${content}
 
-            // Validate each question
-            for (let i = 0; i < parsed.questions.length; i++) {
-                const question = parsed.questions[i];
+กรุณาสรุปเป็นภาษาไทยที่เข้าใจง่าย เน้นจุดสำคัญหลักๆ
+            `.trim();
 
-                if (!question.question || !question.type) {
-                    return {
-                        isValid: false,
-                        error: `Invalid question structure at index ${i}`
-                    };
-                }
-
-                if (question.type === 'multiple_choice' && (!question.options || !Array.isArray(question.options))) {
-                    return {
-                        isValid: false,
-                        error: `Multiple choice question missing options at index ${i}`
-                    };
-                }
-            }
+            const result = await this.generateContent(prompt);
 
             return {
-                isValid: true,
-                data: parsed
+                summary: result.response.text().trim(),
+                originalLength: content.length,
+                summaryLength: result.response.text().trim().length
             };
 
         } catch (error) {
-            return {
-                isValid: false,
-                error: 'Invalid JSON format'
-            };
+            throw this.handleGeminiError(error);
         }
     }
 
     /**
-     * Clean up and format AI response
-     * @param {string} response - Raw AI response
-     * @returns {string} Cleaned response
+     * Health check
      */
-    cleanResponse(response) {
-        if (!response) return '';
+    async healthCheck() {
+        try {
+            const testPrompt = "สวัสดี กรุณาตอบว่า 'สวัสดี'";
 
-        // Remove code block markers
-        let cleaned = response.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+            const startTime = Date.now();
+            const result = await this.model.generateContent(testPrompt);
+            const responseTime = Date.now() - startTime;
 
-        // Remove any leading/trailing whitespace
-        cleaned = cleaned.trim();
+            const response = result.response.text();
+            this.isHealthy = response.includes('สวัสดี');
 
-        // Try to extract JSON if it's embedded in other text
-        const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-            cleaned = jsonMatch[0];
+            logger.aiService('gemini', 'health-check', {
+                isHealthy: this.isHealthy,
+                responseTime,
+                response: response.substring(0, 50)
+            });
+
+            return {
+                healthy: this.isHealthy,
+                responseTime,
+                model: this.config.model,
+                timestamp: new Date().toISOString()
+            };
+
+        } catch (error) {
+            this.isHealthy = false;
+
+            logger.errorWithContext(error, {
+                operation: 'healthCheck',
+                service: 'gemini'
+            });
+
+            return {
+                healthy: false,
+                error: error.message,
+                timestamp: new Date().toISOString()
+            };
         }
-
-        return cleaned;
     }
 
     /**
      * Get usage statistics
-     * @returns {Object} Usage statistics
      */
-    getUsageStats() {
+    async getUsageStats() {
+        // Note: This would typically integrate with Google Cloud's usage APIs
         return {
-            requestCount: this.requestCount,
-            rateLimit: this.rateLimit,
-            lastResetTime: this.lastResetTime,
-            model: this.modelName,
-            uptime: Date.now() - this.lastResetTime
+            model: this.config.model,
+            isHealthy: this.isHealthy,
+            config: {
+                temperature: this.config.temperature,
+                maxTokens: this.config.maxTokens,
+                topP: this.config.topP,
+                topK: this.config.topK
+            },
+            lastHealthCheck: new Date().toISOString()
         };
+    }
+
+    /**
+     * Private helper methods
+     */
+
+    /**
+     * Generate with retry mechanism
+     */
+    async generateWithRetry(prompt, maxRetries, options = {}) {
+        let lastError;
+
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                logger.aiService('gemini', 'generate-attempt', { attempt, maxRetries });
+
+                // Create timeout promise
+                const timeoutPromise = new Promise((_, reject) => {
+                    setTimeout(() => reject(new Error('Request timeout')), this.config.timeout);
+                });
+
+                // Generate content with timeout
+                const generatePromise = this.model.generateContent(prompt);
+                const result = await Promise.race([generatePromise, timeoutPromise]);
+
+                return result;
+
+            } catch (error) {
+                lastError = error;
+
+                logger.aiService('gemini', 'generate-error', {
+                    attempt,
+                    error: error.message
+                });
+
+                // Don't retry on certain errors
+                if (this.isNonRetryableError(error)) {
+                    break;
+                }
+
+                // Wait before retry
+                if (attempt < maxRetries) {
+                    await this.delay(this.config.retryDelay * attempt);
+                }
+            }
+        }
+
+        throw lastError;
+    }
+
+    /**
+     * Build quiz generation prompt
+     */
+    buildQuizPrompt(content, options) {
+        const {
+            questionType,
+            questionCount,
+            difficulty,
+            subject,
+            language,
+            includeExplanations
+        } = options;
+
+        return `
+คุณเป็นผู้เชี่ยวชาญในการสร้างข้อสอบ กรุณาสร้างข้อสอบจากเนื้อหาต่อไปนี้:
+
+เนื้อหา:
+${content}
+
+ข้อกำหนด:
+- ประเภทคำถาม: ${questionType}
+- จำนวนข้อ: ${questionCount}
+- ระดับความยาก: ${difficulty}
+- วิชา: ${subject || 'ไม่ระบุ'}
+- ภาษา: ${language}
+${includeExplanations ? '- รวมคำอธิบายเฉลย' : ''}
+
+กรุณาส่งคืนในรูปแบบ JSON ดังนี้:
+{
+  "title": "ชื่อข้อสอบ",
+  "description": "คำอธิบายข้อสอบ",
+  "questions": [
+    {
+      "question": "ข้อความคำถาม",
+      "options": ["ตัวเลือก 1", "ตัวเลือก 2", "ตัวเลือก 3", "ตัวเลือก 4"],
+      "correct_answer": "คำตอบที่ถูกต้อง",
+      "explanation": "${includeExplanations ? 'คำอธิบายเฉลย' : ''}"
+    }
+  ]
+}
+
+หมายเหตุ:
+- คำถามต้องมีความเกี่ยวข้องกับเนื้อหาที่ให้มา
+- ตัวเลือกต้องสมเหตุสมผลและมีความน่าเชื่อถือ
+- คำตอบต้องถูกต้องและชัดเจน
+- ใช้ภาษาไทยที่ถูกต้องและเหมาะสม
+        `.trim();
+    }
+
+    /**
+     * Build difficulty analysis prompt
+     */
+    buildDifficultyAnalysisPrompt(content) {
+        return `
+วิเคราะห์ระดับความยากของเนื้อหาต่อไปนี้:
+
+${content}
+
+กรุณาส่งคืนในรูปแบบ JSON:
+{
+  "difficulty_level": "easy|medium|hard|expert",
+  "difficulty_score": 1-10,
+  "factors": [
+    "ปัจจัยที่ทำให้ยาก/ง่าย"
+  ],
+  "recommendations": [
+    "คำแนะนำสำหรับการสอน"
+  ],
+  "target_audience": "กลุ่มเป้าหมายที่เหมาะสม"
+}
+        `.trim();
+    }
+
+    /**
+     * Validate prompt input
+     */
+    validatePrompt(prompt) {
+        if (!prompt || typeof prompt !== 'string') {
+            throw new ValidationError('Prompt must be a non-empty string');
+        }
+
+        if (prompt.length > 30000) {
+            throw new ValidationError('Prompt is too long (max 30,000 characters)');
+        }
+
+        if (prompt.trim().length === 0) {
+            throw new ValidationError('Prompt cannot be empty');
+        }
+    }
+
+    /**
+     * Parse quiz response from AI
+     */
+    parseQuizResponse(responseText) {
+        try {
+            // Clean the response
+            const cleanedText = responseText
+                .replace(/```json/g, '')
+                .replace(/```/g, '')
+                .trim();
+
+            const quizData = JSON.parse(cleanedText);
+
+            // Validate quiz structure
+            if (!quizData.title || !quizData.questions || !Array.isArray(quizData.questions)) {
+                throw new Error('Invalid quiz structure');
+            }
+
+            // Validate each question
+            quizData.questions.forEach((question, index) => {
+                if (!question.question || !question.options || !question.correct_answer) {
+                    throw new Error(`Invalid question structure at index ${index}`);
+                }
+            });
+
+            return quizData;
+
+        } catch (error) {
+            throw new ValidationError('Failed to parse quiz response: ' + error.message);
+        }
+    }
+
+    /**
+     * Parse difficulty analysis response
+     */
+    parseDifficultyResponse(responseText) {
+        try {
+            const cleanedText = responseText
+                .replace(/```json/g, '')
+                .replace(/```/g, '')
+                .trim();
+
+            const data = JSON.parse(cleanedText);
+
+            return {
+                level: data.difficulty_level || 'medium',
+                score: data.difficulty_score || 5,
+                factors: data.factors || [],
+                recommendations: data.recommendations || [],
+                targetAudience: data.target_audience || 'ไม่ระบุ'
+            };
+
+        } catch (error) {
+            throw new ValidationError('Failed to parse difficulty response: ' + error.message);
+        }
+    }
+
+    /**
+     * Parse concepts extraction response
+     */
+    parseConceptsResponse(responseText) {
+        try {
+            const cleanedText = responseText
+                .replace(/```json/g, '')
+                .replace(/```/g, '')
+                .trim();
+
+            const data = JSON.parse(cleanedText);
+
+            return {
+                concepts: data.concepts || [],
+                extractedAt: new Date().toISOString()
+            };
+
+        } catch (error) {
+            throw new ValidationError('Failed to parse concepts response: ' + error.message);
+        }
+    }
+
+    /**
+     * Handle Gemini-specific errors
+     */
+    handleGeminiError(error) {
+        if (error instanceof ValidationError || error instanceof AIServiceError) {
+            return error;
+        }
+
+        // Map Gemini errors to custom errors
+        if (error.message?.includes('API key')) {
+            return new AIServiceError('Invalid or missing API key');
+        }
+
+        if (error.message?.includes('quota')) {
+            return new AIServiceError('API quota exceeded');
+        }
+
+        if (error.message?.includes('timeout')) {
+            return new AIServiceError('Request timeout');
+        }
+
+        if (error.message?.includes('safety')) {
+            return new AIServiceError('Content blocked by safety filters');
+        }
+
+        return new AIServiceError('Gemini service error: ' + error.message);
+    }
+
+    /**
+     * Check if error is non-retryable
+     */
+    isNonRetryableError(error) {
+        const nonRetryableErrors = [
+            'API key',
+            'safety',
+            'invalid request',
+            'permission denied'
+        ];
+
+        return nonRetryableErrors.some(errorType =>
+            error.message?.toLowerCase().includes(errorType)
+        );
+    }
+
+    /**
+     * Delay utility for retries
+     */
+    delay(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
     }
 }
 

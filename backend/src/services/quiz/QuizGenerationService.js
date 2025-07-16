@@ -1,29 +1,34 @@
 // backend/src/services/quiz/QuizGenerationService.js
 import { GeminiService } from '../ai/GeminiService.js';
+import { FileService } from '../common/FileService.js';
+import { CacheService } from '../common/CacheService.js';
 import { QuizRepository } from '../../repositories/QuizRepository.js';
 import { UserRepository } from '../../repositories/UserRepository.js';
-import { CacheService } from '../common/CacheService.js';
 import { PromptBuilder } from '../../utils/ai/PromptBuilder.js';
 import { ResponseParser } from '../../utils/ai/ResponseParser.js';
 import { QuizValidator } from '../../utils/quiz/QuizValidator.js';
+import { QuizFormatter } from '../../utils/quiz/QuizFormatter.js';
 import logger from '../../utils/logger.js';
-import { ValidationError, AIServiceError, NotFoundError } from '../../errors/CustomErrors.js';
+import { ValidationError, AIServiceError, NotFoundError, BusinessLogicError } from '../../errors/CustomErrors.js';
 
 /**
  * Quiz Generation Service
  * จัดการ business logic ของการสร้างข้อสอบ
+ * ใช้ AI service, file processing, และ validation
  * แยกออกมาจาก controller เพื่อ separation of concerns
  */
 export class QuizGenerationService {
     constructor(dependencies = {}) {
         // Inject dependencies (for DI Container)
         this.geminiService = dependencies.geminiService || new GeminiService();
+        this.fileService = dependencies.fileService || new FileService();
+        this.cacheService = dependencies.cacheService || new CacheService();
         this.quizRepository = dependencies.quizRepository || new QuizRepository();
         this.userRepository = dependencies.userRepository || new UserRepository();
-        this.cacheService = dependencies.cacheService || new CacheService();
         this.promptBuilder = dependencies.promptBuilder || new PromptBuilder();
         this.responseParser = dependencies.responseParser || new ResponseParser();
         this.quizValidator = dependencies.quizValidator || new QuizValidator();
+        this.quizFormatter = dependencies.quizFormatter || new QuizFormatter();
 
         // Configuration
         this.config = {
@@ -32,7 +37,10 @@ export class QuizGenerationService {
             maxContentLength: 15000,
             minContentLength: 10,
             defaultQuestionCount: 5,
-            maxQuestionCount: 50,
+            maxQuestionCount: 100,
+            maxQuestionsPerQuiz: 100,
+            supportedFileTypes: ['pdf', 'doc', 'docx', 'txt'],
+            maxFileSize: 10 * 1024 * 1024, // 10MB
             cacheExpiry: 3600, // 1 hour
             quotaResetHour: 0, // Reset at midnight
         };
@@ -48,6 +56,7 @@ export class QuizGenerationService {
      */
     async generateFromText(params) {
         const generationId = this.generateId();
+        const timer = logger.startTimer('quiz-generation-from-text');
 
         try {
             const {
@@ -55,12 +64,18 @@ export class QuizGenerationService {
                 topic,
                 questionType,
                 numberOfQuestions,
+                questionCount,
                 difficulty,
                 language,
+                subject,
                 userId,
                 source = 'text',
-                fileName = null
+                fileName = null,
+                options = {}
             } = params;
+
+            // Use numberOfQuestions for backward compatibility, fallback to questionCount
+            const finalQuestionCount = numberOfQuestions || questionCount || this.config.defaultQuestionCount;
 
             // Track generation start
             this.activeGenerations.set(generationId, {
@@ -70,51 +85,70 @@ export class QuizGenerationService {
                 params
             });
 
+            // Validate input
+            this.validateGenerationInput({
+                ...params,
+                content: content || topic,
+                questionCount: finalQuestionCount
+            });
+
             // Validate user exists and has quota
             await this.validateUserQuota(userId);
 
+            // Check cache first
+            const cacheKey = this.generateCacheKey('text', content || topic, questionType, finalQuestionCount);
+            const cachedResult = await this.cacheService.get(cacheKey);
+            
+            if (cachedResult && !options.skipCache) {
+                logger.logActivity('quiz_generation_cache_hit', { userId, cacheKey });
+                this.activeGenerations.delete(generationId);
+                return cachedResult;
+            }
+
             // Update generation status
             this.updateGenerationStatus(generationId, 'building_prompt');
+
+            // Log generation start
+            logger.logActivity('quiz_generation_started', {
+                generationId,
+                userId,
+                type: 'text',
+                questionType,
+                questionCount: finalQuestionCount,
+                contentLength: (content || topic).length
+            });
 
             // Build AI prompt
             const prompt = await this.buildPrompt({
                 content: content || topic,
                 questionType,
-                numberOfQuestions,
+                numberOfQuestions: finalQuestionCount,
                 difficulty,
-                language
+                language,
+                subject
             });
 
             // Update generation status
             this.updateGenerationStatus(generationId, 'generating');
 
             // Generate quiz using AI with retry logic
-            const aiResponse = await this.generateWithRetry(prompt, generationId);
+            const aiResponse = await this.generateWithRetry(prompt, generationId, userId);
 
             // Update generation status
             this.updateGenerationStatus(generationId, 'parsing');
 
-            // Parse and validate AI response
-            const parsedQuiz = await this.responseParser.parseQuizResponse(aiResponse);
-
-            // Validate quiz structure
-            const validation = this.quizValidator.validateGeneratedQuiz(parsedQuiz);
-            if (!validation.isValid) {
-                throw new ValidationError(`Generated quiz validation failed: ${validation.errors.join(', ')}`);
-            }
-
-            // Update generation status
-            this.updateGenerationStatus(generationId, 'enhancing');
-
-            // Enhance quiz with metadata
-            const enhancedQuiz = await this.enhanceQuizMetadata(parsedQuiz, {
+            // Process and validate response
+            const processedQuiz = await this.processAIResponse(aiResponse, {
+                questionType,
+                questionCount: finalQuestionCount,
                 userId,
+                generationId,
                 source,
-                fileName,
-                originalPrompt: prompt,
-                generationParams: params,
-                generationId
+                fileName
             });
+
+            // Cache result
+            await this.cacheService.set(cacheKey, processedQuiz, this.config.cacheExpiry);
 
             // Update generation status
             this.updateGenerationStatus(generationId, 'completed');
@@ -123,8 +157,8 @@ export class QuizGenerationService {
             logger.logActivity('quiz_generated', {
                 generationId,
                 userId,
-                title: enhancedQuiz.title,
-                questionCount: enhancedQuiz.questions.length,
+                title: processedQuiz.title,
+                questionCount: processedQuiz.questions.length,
                 questionType,
                 source,
                 duration: Date.now() - this.activeGenerations.get(generationId).startTime
@@ -136,7 +170,7 @@ export class QuizGenerationService {
             // Remove from active generations
             this.activeGenerations.delete(generationId);
 
-            return enhancedQuiz;
+            return processedQuiz;
 
         } catch (error) {
             // Update generation status to failed
@@ -155,16 +189,273 @@ export class QuizGenerationService {
             // Clean up
             this.activeGenerations.delete(generationId);
 
-            if (error instanceof AIServiceError) {
+            if (error instanceof AIServiceError || error instanceof ValidationError) {
                 throw error;
             }
 
-            throw new Error(`Quiz generation failed: ${error.message}`);
+            throw new BusinessLogicError(`Quiz generation failed: ${error.message}`);
         }
     }
 
     /**
-     * สร้างคำถามใหม่สำหรับข้อสอบที่มีอยู่
+     * สร้างข้อสอบจากไฟล์
+     * @param {Object} params - Generation parameters with file
+     * @returns {Object} Generated quiz
+     */
+    async generateFromFile(params) {
+        const generationId = this.generateId();
+        const timer = logger.startTimer('quiz-generation-from-file');
+        let extractedContent = null;
+
+        try {
+            const { 
+                file, 
+                questionType, 
+                questionCount, 
+                numberOfQuestions,
+                difficulty,
+                subject,
+                language,
+                userId,
+                options = {}
+            } = params;
+
+            // Use numberOfQuestions for backward compatibility, fallback to questionCount
+            const finalQuestionCount = numberOfQuestions || questionCount || this.config.defaultQuestionCount;
+
+            // Track generation start
+            this.activeGenerations.set(generationId, {
+                userId,
+                startTime: Date.now(),
+                status: 'file_processing',
+                params: {
+                    ...params,
+                    fileName: file.originalname
+                }
+            });
+
+            // Validate file
+            this.validateFileInput(file);
+
+            // Validate user quota
+            await this.validateUserQuota(userId);
+
+            // Log file processing start
+            logger.logActivity('file_processing_started', {
+                generationId,
+                userId,
+                fileName: file.originalname,
+                fileSize: file.size,
+                mimeType: file.mimetype
+            });
+
+            // Extract content from file
+            this.updateGenerationStatus(generationId, 'extracting_content');
+            extractedContent = await this.fileService.extractText(file);
+            
+            if (!extractedContent || extractedContent.trim().length === 0) {
+                throw new ValidationError('ไม่สามารถแยกข้อความจากไฟล์ได้');
+            }
+
+            // Log content extraction success
+            logger.logActivity('content_extracted', {
+                generationId,
+                userId,
+                contentLength: extractedContent.length
+            });
+
+            // Generate quiz from extracted content
+            this.updateGenerationStatus(generationId, 'generating_from_content');
+            const quiz = await this.generateFromText({
+                content: extractedContent,
+                questionType,
+                questionCount: finalQuestionCount,
+                difficulty,
+                subject,
+                language,
+                userId,
+                source: 'file',
+                fileName: file.originalname,
+                options: {
+                    ...options,
+                    skipCache: true // Skip cache for file uploads to ensure fresh generation
+                }
+            });
+
+            // Add file metadata to quiz
+            quiz.sourceFile = {
+                name: file.originalname,
+                size: file.size,
+                type: file.mimetype,
+                extractedAt: new Date().toISOString(),
+                contentLength: extractedContent.length
+            };
+
+            this.updateGenerationStatus(generationId, 'completed');
+
+            logger.logActivity('file_generation_completed', {
+                generationId,
+                userId,
+                fileName: file.originalname,
+                questionCount: quiz.questions.length,
+                duration: Date.now() - this.activeGenerations.get(generationId).startTime
+            });
+
+            this.activeGenerations.delete(generationId);
+            return quiz;
+
+        } catch (error) {
+            if (this.activeGenerations.has(generationId)) {
+                this.updateGenerationStatus(generationId, 'failed', error.message);
+            }
+
+            logger.error('File generation failed:', {
+                generationId,
+                error: error.message,
+                userId: params.userId,
+                fileName: params.file?.originalname
+            });
+
+            this.activeGenerations.delete(generationId);
+
+            if (error instanceof ValidationError || error instanceof AIServiceError) {
+                throw error;
+            }
+
+            throw new BusinessLogicError(`File quiz generation failed: ${error.message}`);
+        }
+    }
+
+    /**
+     * สร้างคำถามเพิ่มเติมสำหรับข้อสอบที่มีอยู่
+     * @param {string} quizId - Quiz ID
+     * @param {Object} params - Additional generation parameters
+     * @returns {Array} New questions
+     */
+    async generateAdditionalQuestions(quizId, params) {
+        const generationId = this.generateId();
+
+        try {
+            const { questionCount, numberOfQuestions, userId } = params;
+            const finalQuestionCount = numberOfQuestions || questionCount || this.config.defaultQuestionCount;
+
+            // Track generation
+            this.activeGenerations.set(generationId, {
+                type: 'additional_questions',
+                quizId,
+                userId,
+                startTime: Date.now(),
+                status: 'starting'
+            });
+
+            // Get existing quiz
+            const existingQuiz = await this.quizRepository.findById(quizId);
+            if (!existingQuiz || existingQuiz.deleted_at) {
+                throw new NotFoundError('Quiz');
+            }
+
+            // Check permission
+            const hasPermission = await this.checkQuizPermission(quizId, userId);
+            if (!hasPermission) {
+                throw new ValidationError('ไม่มีสิทธิ์แก้ไขข้อสอบนี้');
+            }
+
+            // Validate user quota
+            await this.validateUserQuota(userId);
+
+            this.updateGenerationStatus(generationId, 'building_prompt');
+
+            // Generate new questions based on existing content
+            const prompt = await this.promptBuilder.buildAdditionalQuestionsPrompt({
+                existingQuestions: JSON.parse(existingQuiz.questions || '[]'),
+                questionType: existingQuiz.question_type,
+                questionCount: finalQuestionCount,
+                topic: existingQuiz.title,
+                difficulty: existingQuiz.difficulty
+            });
+
+            this.updateGenerationStatus(generationId, 'generating');
+            const aiResponse = await this.generateWithRetry(prompt, generationId, userId);
+
+            this.updateGenerationStatus(generationId, 'processing');
+            const newQuestions = await this.processAdditionalQuestions(aiResponse, {
+                existingQuestions: JSON.parse(existingQuiz.questions || '[]'),
+                questionType: existingQuiz.question_type
+            });
+
+            this.updateGenerationStatus(generationId, 'completed');
+
+            logger.logActivity('additional_questions_generated', {
+                generationId,
+                userId,
+                quizId,
+                newQuestionCount: newQuestions.length
+            });
+
+            this.activeGenerations.delete(generationId);
+            return newQuestions;
+
+        } catch (error) {
+            if (this.activeGenerations.has(generationId)) {
+                this.updateGenerationStatus(generationId, 'failed', error.message);
+            }
+
+            logger.error('Additional questions generation failed:', {
+                generationId,
+                quizId,
+                error: error.message,
+                userId: params.userId
+            });
+
+            this.activeGenerations.delete(generationId);
+
+            if (error instanceof ValidationError || error instanceof NotFoundError || error instanceof AIServiceError) {
+                throw error;
+            }
+
+            throw new BusinessLogicError(`Additional questions generation failed: ${error.message}`);
+        }
+    }
+
+    /**
+     * ประเมินความยากของเนื้อหา
+     * @param {string} content - Content to analyze
+     * @returns {Object} Difficulty analysis
+     */
+    async analyzeDifficulty(content) {
+        try {
+            const prompt = this.promptBuilder.buildDifficultyAnalysisPrompt(content);
+            const response = await this.geminiService.generateContent(prompt);
+            
+            return this.parseDifficultyResponse(response);
+        } catch (error) {
+            logger.error('Failed to analyze difficulty:', error.message);
+            throw new AIServiceError('ไม่สามารถวิเคราะห์ความยากได้');
+        }
+    }
+
+    /**
+     * ตรวจสอบคุณภาพของข้อสอบ
+     * @param {Object} quiz - Quiz to validate
+     * @returns {Object} Quality report
+     */
+    async validateQuizQuality(quiz) {
+        try {
+            const validationResult = await this.quizValidator.validateQuiz(quiz);
+            
+            if (!validationResult.isValid) {
+                throw new ValidationError('ข้อสอบไม่ผ่านการตรวจสอบคุณภาพ', validationResult.errors);
+            }
+
+            return validationResult;
+        } catch (error) {
+            logger.error('Quiz quality validation failed:', error.message);
+            throw error;
+        }
+    }
+
+    /**
+     * สร้างคำถามใหม่สำหรับข้อสอบที่มีอยู่ (regenerate existing questions)
      * @param {string} quizId - Quiz ID
      * @param {Array} questionIndices - Indices of questions to regenerate
      * @param {Object} params - Generation parameters
@@ -278,12 +569,12 @@ export class QuizGenerationService {
     }
 
     /**
-     * สร้าง prompt สำหรับ AI
+     * สร้าง prompt สำหรับ AI (enhanced version)
      * @param {Object} params - Prompt parameters
      * @returns {string} Generated prompt
      */
     async buildPrompt(params) {
-        const cacheKey = `prompt:${this.generateCacheKey(params)}`;
+        const cacheKey = `prompt:${this.generateCacheKey('prompt', JSON.stringify(params), '', 0)}`;
 
         // Try cache first
         const cachedPrompt = await this.cacheService.get(cacheKey);
@@ -291,12 +582,277 @@ export class QuizGenerationService {
             return cachedPrompt;
         }
 
-        const prompt = await this.promptBuilder.buildQuizPrompt(params);
+        const prompt = await this.promptBuilder.buildQuizGenerationPrompt(params);
 
         // Cache for reuse
         await this.cacheService.set(cacheKey, prompt, 1800); // 30 minutes
 
         return prompt;
+    }
+
+    /**
+     * Generate with retry mechanism (enhanced version)
+     * @param {string} prompt - AI prompt
+     * @param {string} generationId - Generation tracking ID
+     * @param {string} userId - User ID for logging
+     * @returns {string} AI response
+     */
+    async generateWithRetry(prompt, generationId = null, userId = null) {
+        let lastError;
+
+        for (let attempt = 1; attempt <= this.config.maxRetries; attempt++) {
+            try {
+                // Update status if tracking
+                if (generationId && this.activeGenerations.has(generationId)) {
+                    this.updateGenerationStatus(generationId, 'generating', `Attempt ${attempt}/${this.config.maxRetries}`);
+                }
+
+                logger.logActivity('ai_request', { userId, generationId, attempt });
+
+                const startTime = Date.now();
+                const response = await this.geminiService.generateContent(prompt);
+                const duration = Date.now() - startTime;
+
+                // Log AI interaction
+                logger.logActivity('ai_response_success', { 
+                    userId, 
+                    generationId, 
+                    attempt, 
+                    duration,
+                    model: this.geminiService.getModelInfo?.() || 'gemini-pro'
+                });
+
+                return response;
+            } catch (error) {
+                lastError = error;
+
+                logger.warn(`AI generation attempt ${attempt} failed:`, {
+                    generationId,
+                    userId,
+                    error: error.message,
+                    attempt,
+                    maxRetries: this.config.maxRetries
+                });
+
+                // Don't retry on certain errors
+                if (error.code === 'INVALID_PROMPT' || error.code === 'QUOTA_EXCEEDED') {
+                    throw error;
+                }
+
+                // Wait before retry (exponential backoff)
+                if (attempt < this.config.maxRetries) {
+                    const delay = this.config.retryDelay * Math.pow(2, attempt - 1);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+            }
+        }
+
+        throw new AIServiceError(`AI service failed after ${this.config.maxRetries} attempts: ${lastError.message}`, lastError);
+    }
+
+    /**
+     * Process AI response and format quiz (new enhanced method)
+     * @param {string} aiResponse - Raw AI response
+     * @param {Object} context - Processing context
+     * @returns {Object} Processed quiz
+     */
+    async processAIResponse(aiResponse, context) {
+        try {
+            // Parse JSON response
+            const rawQuiz = this.parseAIResponse(aiResponse);
+            
+            // Validate structure
+            this.validateQuizStructure(rawQuiz);
+            
+            // Format and enhance quiz
+            const formattedQuiz = await this.enhanceQuizMetadata(rawQuiz, context);
+            
+            // Final validation
+            const validation = this.quizValidator.validateGeneratedQuiz(formattedQuiz);
+            if (!validation.isValid) {
+                throw new ValidationError(`Generated quiz validation failed: ${validation.errors.join(', ')}`);
+            }
+            
+            return formattedQuiz;
+
+        } catch (error) {
+            throw new ValidationError(`Failed to process AI response: ${error.message}`);
+        }
+    }
+
+    /**
+     * Parse AI response text to JSON (new method)
+     * @param {string|Object} response - AI response
+     * @returns {Object} Parsed quiz object
+     */
+    parseAIResponse(response) {
+        try {
+            let responseText = response.text ? response.text() : response;
+            
+            // Clean response
+            responseText = responseText
+                .replace(/```json\n?/g, '')
+                .replace(/```\n?/g, '')
+                .trim();
+
+            return JSON.parse(responseText);
+        } catch (error) {
+            throw new ValidationError('ไม่สามารถประมวลผลผลลัพธ์จาก AI ได้');
+        }
+    }
+
+    /**
+     * Validate generation input parameters (new method)
+     * @param {Object} params - Input parameters
+     */
+    validateGenerationInput(params) {
+        const { content, questionType, questionCount, userId } = params;
+
+        if (!content || content.trim().length === 0) {
+            throw new ValidationError('เนื้อหาสำหรับสร้างข้อสอบไม่สามารถเป็นค่าว่างได้');
+        }
+
+        if (!questionType) {
+            throw new ValidationError('ต้องระบุประเภทของคำถาม');
+        }
+
+        if (!userId) {
+            throw new ValidationError('ต้องระบุ user ID');
+        }
+
+        if (questionCount && (questionCount < 1 || questionCount > this.config.maxQuestionsPerQuiz)) {
+            throw new ValidationError(`จำนวนคำถามต้องอยู่ระหว่าง 1-${this.config.maxQuestionsPerQuiz}`);
+        }
+
+        if (content.length > 50000) {
+            throw new ValidationError('เนื้อหายาวเกินไป (สูงสุด 50,000 ตัวอักษร)');
+        }
+    }
+
+    /**
+     * Validate file input (new method)
+     * @param {Object} file - File object
+     */
+    validateFileInput(file) {
+        if (!file) {
+            throw new ValidationError('ต้องระบุไฟล์');
+        }
+
+        if (file.size > this.config.maxFileSize) {
+            throw new ValidationError('ไฟล์มีขนาดใหญ่เกินไป (สูงสุด 10MB)');
+        }
+
+        const fileExtension = this.fileService.getFileExtension(file.originalname);
+        if (!this.config.supportedFileTypes.includes(fileExtension)) {
+            throw new ValidationError(`ประเภทไฟล์ไม่รองรับ รองรับเฉพาะ: ${this.config.supportedFileTypes.join(', ')}`);
+        }
+    }
+
+    /**
+     * Validate quiz structure from AI (new method)
+     * @param {Object} quiz - Quiz object to validate
+     */
+    validateQuizStructure(quiz) {
+        if (!quiz.title || !quiz.questions || !Array.isArray(quiz.questions)) {
+            throw new ValidationError('รูปแบบข้อมูลข้อสอบไม่ถูกต้อง');
+        }
+
+        if (quiz.questions.length === 0) {
+            throw new ValidationError('ไม่พบคำถามในข้อสอบ');
+        }
+
+        // Validate each question
+        quiz.questions.forEach((question, index) => {
+            if (!question.question || !question.options || !question.correct_answer) {
+                throw new ValidationError(`คำถามที่ ${index + 1} มีรูปแบบไม่ถูกต้อง`);
+            }
+        });
+    }
+
+    /**
+     * Process additional questions response (new method)
+     * @param {string} aiResponse - AI response
+     * @param {Object} context - Processing context
+     * @returns {Array} Processed questions
+     */
+    async processAdditionalQuestions(aiResponse, context) {
+        const rawResponse = this.parseAIResponse(aiResponse);
+        
+        if (!rawResponse.questions || !Array.isArray(rawResponse.questions)) {
+            throw new ValidationError('ไม่สามารถสร้างคำถามเพิ่มเติมได้');
+        }
+
+        // Validate and format new questions
+        const formattedQuestions = rawResponse.questions.map((question, index) => {
+            // Basic validation
+            if (!question.question || !question.options || !question.correct_answer) {
+                throw new ValidationError(`คำถามเพิ่มเติมที่ ${index + 1} มีรูปแบบไม่ถูกต้อง`);
+            }
+
+            return {
+                ...question,
+                id: this.generateQuestionId(),
+                createdAt: new Date().toISOString()
+            };
+        });
+
+        return formattedQuestions;
+    }
+
+    /**
+     * Parse difficulty analysis response (new method)
+     * @param {string} response - AI response
+     * @returns {Object} Difficulty analysis
+     */
+    parseDifficultyResponse(response) {
+        try {
+            const rawResponse = this.parseAIResponse(response);
+            
+            return {
+                level: rawResponse.difficulty_level || 'medium',
+                score: rawResponse.difficulty_score || 5,
+                factors: rawResponse.factors || [],
+                recommendations: rawResponse.recommendations || []
+            };
+        } catch (error) {
+            throw new ValidationError('ไม่สามารถวิเคราะห์ความยากได้');
+        }
+    }
+
+    /**
+     * Generate cache key (enhanced version)
+     * @param {string} type - Cache type
+     * @param {string} content - Content to hash
+     * @param {string} questionType - Question type
+     * @param {number} questionCount - Question count
+     * @returns {string} Cache key
+     */
+    generateCacheKey(type, content, questionType, questionCount) {
+        const contentHash = this.hashString(content);
+        return `quiz:${type}:${contentHash}:${questionType}:${questionCount}`;
+    }
+
+    /**
+     * Simple hash function for cache keys (new method)
+     * @param {string} str - String to hash
+     * @returns {string} Hash string
+     */
+    hashString(str) {
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+            const char = str.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash = hash & hash; // Convert to 32bit integer
+        }
+        return Math.abs(hash).toString(36);
+    }
+
+    /**
+     * Generate question ID (new method)
+     * @returns {string} Question ID
+     */
+    generateQuestionId() {
+        return `q_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     }
 
     /**
@@ -466,28 +1022,28 @@ export class QuizGenerationService {
     }
 
     /**
-     * Enhance quiz with additional metadata
+     * Enhance quiz with additional metadata (updated version)
      * @param {Object} quiz - Base quiz object
-     * @param {Object} metadata - Additional metadata
+     * @param {Object} context - Enhancement context
      * @returns {Object} Enhanced quiz
      */
-    async enhanceQuizMetadata(quiz, metadata) {
+    async enhanceQuizMetadata(quiz, context) {
         const now = new Date();
 
         return {
             ...quiz,
             id: this.generateQuizId(),
-            userId: metadata.userId,
-            source: metadata.source,
-            fileName: metadata.fileName,
+            userId: context.userId,
+            source: context.source || 'text',
+            fileName: context.fileName || null,
             createdAt: now,
             updatedAt: now,
             version: 1,
             generationMetadata: {
-                generationId: metadata.generationId,
-                originalPrompt: metadata.originalPrompt,
-                generationParams: metadata.generationParams,
-                aiModel: this.geminiService.getModelInfo(),
+                generationId: context.generationId,
+                originalPrompt: context.originalPrompt,
+                generationParams: context.generationParams || {},
+                aiModel: this.geminiService.getModelInfo?.() || 'gemini-pro',
                 generatedAt: now
             },
             statistics: {
@@ -495,7 +1051,9 @@ export class QuizGenerationService {
                 questionTypes: this.analyzeQuestionTypes(quiz.questions),
                 estimatedTime: this.estimateCompletionTime(quiz.questions),
                 difficulty: this.analyzeDifficulty(quiz.questions)
-            }
+            },
+            // Add source file info if available
+            ...(context.sourceFile && { sourceFile: context.sourceFile })
         };
     }
 
@@ -699,7 +1257,7 @@ export class QuizGenerationService {
         return systemDefaults;
     }
 
-    // Helper methods
+    // Helper methods (updated and enhanced)
 
     generateId() {
         return `gen_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -707,10 +1265,6 @@ export class QuizGenerationService {
 
     generateQuizId() {
         return `quiz_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    }
-
-    generateCacheKey(params) {
-        return btoa(JSON.stringify(params)).substr(0, 20);
     }
 
     updateGenerationStatus(generationId, status, details = null) {
@@ -886,6 +1440,15 @@ export class QuizGenerationService {
 
     async buildRegenerationPrompt(quiz, questions, params) {
         return this.promptBuilder.buildRegenerationPrompt(quiz, questions, params);
+    }
+
+    /**
+     * Delay utility for retries (new method)
+     * @param {number} ms - Milliseconds to delay
+     * @returns {Promise} Delay promise
+     */
+    delay(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
     }
 }
 

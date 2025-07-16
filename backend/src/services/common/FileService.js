@@ -1,353 +1,504 @@
 // backend/src/services/common/FileService.js
 import fs from 'fs/promises';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import mammoth from 'mammoth';
-import pdf from 'pdf-parse';
-import logger from '../../utils/logger.js';
-import { FileError } from '../../errors/CustomErrors.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import { PDFExtract } from 'pdf.js-extract';
+import logger from '../../utils/common/Logger.js';
+import { FileOperationError, ValidationError } from '../../errors/CustomErrors.js';
 
 /**
  * File Service
- * จัดการไฟล์ upload, extraction, และ validation
+ * จัดการการประมวลผลไฟล์ต่างๆ
+ * รองรับ PDF, DOC, DOCX, TXT
  */
 export class FileService {
-    constructor() {
-        this.allowedMimeTypes = [
-            'text/plain',
-            'application/pdf',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        ];
+    constructor(config = {}) {
+        this.config = {
+            maxFileSize: config.maxFileSize || 10 * 1024 * 1024, // 10MB
+            supportedTypes: config.supportedTypes || [
+                'application/pdf',
+                'application/msword',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'text/plain',
+                'text/csv'
+            ],
+            tempDir: config.tempDir || './temp',
+            encoding: config.encoding || 'utf8',
+            ...config
+        };
 
-        this.maxFileSize = parseInt(process.env.MAX_FILE_SIZE) || 10 * 1024 * 1024; // 10MB
-        this.uploadPath = process.env.UPLOAD_PATH || path.join(__dirname, '../../../uploads');
+        // Initialize temp directory
+        this.initializeTempDirectory();
     }
 
     /**
-     * Validate uploaded file
-     * @param {Object} file - Multer file object
-     * @returns {Object} Validation result
+     * Initialize temporary directory
      */
-    async validateFile(file) {
+    async initializeTempDirectory() {
         try {
-            if (!file) {
-                return {
-                    isValid: false,
-                    message: 'No file provided'
-                };
-            }
-
-            // Check file size
-            if (file.size > this.maxFileSize) {
-                return {
-                    isValid: false,
-                    message: `File size exceeds limit. Maximum ${Math.round(this.maxFileSize / 1024 / 1024)}MB allowed.`
-                };
-            }
-
-            // Check mime type
-            if (!this.allowedMimeTypes.includes(file.mimetype)) {
-                return {
-                    isValid: false,
-                    message: `File type not allowed. Supported types: ${this.allowedMimeTypes.join(', ')}`
-                };
-            }
-
-            // Check file extension
-            const allowedExtensions = ['.txt', '.pdf', '.docx'];
-            const fileExtension = path.extname(file.originalname).toLowerCase();
-
-            if (!allowedExtensions.includes(fileExtension)) {
-                return {
-                    isValid: false,
-                    message: `File extension not allowed. Supported extensions: ${allowedExtensions.join(', ')}`
-                };
-            }
-
-            // Check if file exists and is readable
-            try {
-                await fs.access(file.path, fs.constants.R_OK);
-            } catch (error) {
-                return {
-                    isValid: false,
-                    message: 'File is not accessible'
-                };
-            }
-
-            return {
-                isValid: true,
-                message: 'File validation passed'
-            };
-
+            await fs.mkdir(this.config.tempDir, { recursive: true });
+            logger.info('Temp directory initialized:', { dir: this.config.tempDir });
         } catch (error) {
-            logger.error('File validation error:', {
-                fileName: file?.originalname,
-                error: error.message
+            logger.errorWithContext(error, {
+                operation: 'initializeTempDirectory',
+                tempDir: this.config.tempDir
             });
-
-            return {
-                isValid: false,
-                message: 'File validation failed'
-            };
         }
     }
 
     /**
      * Extract text from uploaded file
-     * @param {Object} file - Multer file object
-     * @returns {string} Extracted text
      */
-    async extractTextFromFile(file) {
+    async extractText(file) {
         try {
-            const fileExtension = path.extname(file.originalname).toLowerCase();
-            let extractedText = '';
+            // Validate file
+            this.validateFile(file);
 
-            switch (fileExtension) {
-                case '.txt':
-                    extractedText = await this.extractFromTextFile(file.path);
-                    break;
-                case '.pdf':
-                    extractedText = await this.extractFromPDF(file.path);
-                    break;
-                case '.docx':
-                    extractedText = await this.extractFromDocx(file.path);
-                    break;
-                default:
-                    throw new FileError(`Unsupported file type: ${fileExtension}`);
-            }
-
-            // Basic text cleaning
-            extractedText = this.cleanExtractedText(extractedText);
-
-            if (!extractedText || extractedText.trim().length < 10) {
-                throw new FileError('Insufficient content in file');
-            }
-
-            logger.info('Text extracted successfully', {
+            logger.info('Starting text extraction:', {
                 fileName: file.originalname,
-                textLength: extractedText.length,
-                fileType: fileExtension
+                fileSize: file.size,
+                mimeType: file.mimetype
             });
 
-            return extractedText;
+            let extractedText;
 
-        } catch (error) {
-            logger.error('Text extraction error:', {
-                fileName: file?.originalname,
-                error: error.message
-            });
+            // Extract based on file type
+            switch (file.mimetype) {
+                case 'application/pdf':
+                    extractedText = await this.extractFromPDF(file);
+                    break;
 
-            if (error instanceof FileError) {
-                throw error;
+                case 'application/msword':
+                case 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+                    extractedText = await this.extractFromWord(file);
+                    break;
+
+                case 'text/plain':
+                case 'text/csv':
+                    extractedText = await this.extractFromText(file);
+                    break;
+
+                default:
+                    throw new ValidationError(`Unsupported file type: ${file.mimetype}`);
             }
 
-            throw new FileError(`Failed to extract text: ${error.message}`);
-        }
-    }
+            // Clean and validate extracted text
+            const cleanedText = this.cleanExtractedText(extractedText);
 
-    /**
-     * Extract text from plain text file
-     * @param {string} filePath - File path
-     * @returns {string} Extracted text
-     */
-    async extractFromTextFile(filePath) {
-        try {
-            const data = await fs.readFile(filePath, 'utf8');
-            return data;
+            logger.info('Text extraction completed:', {
+                fileName: file.originalname,
+                originalLength: extractedText.length,
+                cleanedLength: cleanedText.length
+            });
+
+            return cleanedText;
+
         } catch (error) {
-            throw new FileError(`Failed to read text file: ${error.message}`);
+            logger.errorWithContext(error, {
+                operation: 'extractText',
+                fileName: file?.originalname,
+                fileSize: file?.size
+            });
+
+            throw new FileOperationError(`Failed to extract text: ${error.message}`);
         }
     }
 
     /**
      * Extract text from PDF file
-     * @param {string} filePath - File path
-     * @returns {string} Extracted text
      */
-    async extractFromPDF(filePath) {
+    async extractFromPDF(file) {
         try {
-            const dataBuffer = await fs.readFile(filePath);
-            const data = await pdf(dataBuffer);
-            return data.text;
+            const pdfExtract = new PDFExtract();
+
+            return new Promise((resolve, reject) => {
+                pdfExtract.extract(file.path || file.buffer, {}, (error, data) => {
+                    if (error) {
+                        reject(new FileOperationError(`PDF extraction failed: ${error.message}`));
+                        return;
+                    }
+
+                    try {
+                        let text = '';
+
+                        if (data && data.pages) {
+                            data.pages.forEach(page => {
+                                if (page.content) {
+                                    page.content.forEach(item => {
+                                        if (item.str && item.str.trim()) {
+                                            text += item.str + ' ';
+                                        }
+                                    });
+                                }
+                            });
+                        }
+
+                        if (text.trim().length === 0) {
+                            reject(new FileOperationError('No text content found in PDF'));
+                            return;
+                        }
+
+                        resolve(text.trim());
+
+                    } catch (processingError) {
+                        reject(new FileOperationError(`PDF processing error: ${processingError.message}`));
+                    }
+                });
+            });
+
         } catch (error) {
-            throw new FileError(`Failed to extract text from PDF: ${error.message}`);
+            throw new FileOperationError(`PDF extraction error: ${error.message}`);
         }
     }
 
     /**
-     * Extract text from DOCX file
-     * @param {string} filePath - File path
-     * @returns {string} Extracted text
+     * Extract text from Word document (DOC/DOCX)
      */
-    async extractFromDocx(filePath) {
+    async extractFromWord(file) {
         try {
-            const result = await mammoth.extractRawText({ path: filePath });
+            let buffer;
+
+            // Get file buffer
+            if (file.buffer) {
+                buffer = file.buffer;
+            } else if (file.path) {
+                buffer = await fs.readFile(file.path);
+            } else {
+                throw new FileOperationError('No file data available');
+            }
+
+            // Extract text using mammoth
+            const result = await mammoth.extractRawText({ buffer });
+
+            if (!result.value || result.value.trim().length === 0) {
+                throw new FileOperationError('No text content found in Word document');
+            }
+
+            // Log any warnings
+            if (result.messages && result.messages.length > 0) {
+                logger.warn('Word extraction warnings:', {
+                    messages: result.messages.map(msg => msg.message)
+                });
+            }
+
             return result.value;
+
         } catch (error) {
-            throw new FileError(`Failed to extract text from DOCX: ${error.message}`);
+            throw new FileOperationError(`Word extraction error: ${error.message}`);
+        }
+    }
+
+    /**
+     * Extract text from plain text file
+     */
+    async extractFromText(file) {
+        try {
+            let text;
+
+            // Read file content
+            if (file.buffer) {
+                text = file.buffer.toString(this.config.encoding);
+            } else if (file.path) {
+                text = await fs.readFile(file.path, this.config.encoding);
+            } else {
+                throw new FileOperationError('No file data available');
+            }
+
+            if (!text || text.trim().length === 0) {
+                throw new FileOperationError('Text file is empty');
+            }
+
+            return text;
+
+        } catch (error) {
+            if (error instanceof FileOperationError) {
+                throw error;
+            }
+            throw new FileOperationError(`Text extraction error: ${error.message}`);
         }
     }
 
     /**
      * Clean extracted text
-     * @param {string} text - Raw extracted text
-     * @returns {string} Cleaned text
      */
     cleanExtractedText(text) {
-        if (!text) return '';
+        if (!text || typeof text !== 'string') {
+            return '';
+        }
 
         return text
-            // Remove excessive whitespace
+            // Remove extra whitespace
             .replace(/\s+/g, ' ')
-            // Remove special characters that might interfere with AI processing
-            .replace(/[^\w\s\u0E00-\u0E7F.,!?;:()\-]/g, '')
-            // Trim whitespace
+            // Remove special characters that might cause issues
+            .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+            // Remove multiple line breaks
+            .replace(/\n\s*\n/g, '\n')
+            // Trim
             .trim();
     }
 
     /**
-     * Clean up uploaded file
-     * @param {string} filePath - File path to delete
-     * @returns {boolean} Success status
+     * Validate uploaded file
      */
-    async cleanupFile(filePath) {
+    validateFile(file) {
+        if (!file) {
+            throw new ValidationError('No file provided');
+        }
+
+        // Check file size
+        if (file.size > this.config.maxFileSize) {
+            throw new ValidationError(
+                `File size too large. Maximum size is ${this.config.maxFileSize / (1024 * 1024)}MB`
+            );
+        }
+
+        // Check file type
+        if (!this.config.supportedTypes.includes(file.mimetype)) {
+            throw new ValidationError(
+                `Unsupported file type: ${file.mimetype}. Supported types: ${this.config.supportedTypes.join(', ')}`
+            );
+        }
+
+        // Check if file has content
+        if (file.size === 0) {
+            throw new ValidationError('File is empty');
+        }
+    }
+
+    /**
+     * Get file extension from filename
+     */
+    getFileExtension(filename) {
+        if (!filename || typeof filename !== 'string') {
+            return '';
+        }
+
+        return path.extname(filename).toLowerCase().substring(1);
+    }
+
+    /**
+     * Generate safe filename
+     */
+    generateSafeFilename(originalName, prefix = '') {
+        const ext = this.getFileExtension(originalName);
+        const timestamp = Date.now();
+        const random = Math.random().toString(36).substring(2, 8);
+
+        const safeName = originalName
+            .replace(/[^a-zA-Z0-9.-]/g, '_')
+            .replace(/_{2,}/g, '_')
+            .substring(0, 50);
+
+        return `${prefix}${timestamp}_${random}_${safeName}${ext ? '.' + ext : ''}`;
+    }
+
+    /**
+     * Save file to temporary directory
+     */
+    async saveToTemp(file, customName = null) {
         try {
-            await fs.unlink(filePath);
-            logger.debug('File cleaned up successfully', { filePath });
-            return true;
+            const filename = customName || this.generateSafeFilename(file.originalname, 'temp_');
+            const tempPath = path.join(this.config.tempDir, filename);
+
+            // Ensure temp directory exists
+            await fs.mkdir(path.dirname(tempPath), { recursive: true });
+
+            // Save file
+            if (file.buffer) {
+                await fs.writeFile(tempPath, file.buffer);
+            } else if (file.path) {
+                await fs.copyFile(file.path, tempPath);
+            } else {
+                throw new FileOperationError('No file data to save');
+            }
+
+            logger.info('File saved to temp:', {
+                originalName: file.originalname,
+                tempPath,
+                size: file.size
+            });
+
+            return tempPath;
+
         } catch (error) {
-            logger.error('File cleanup error:', {
+            logger.errorWithContext(error, {
+                operation: 'saveToTemp',
+                fileName: file?.originalname
+            });
+
+            throw new FileOperationError(`Failed to save file to temp: ${error.message}`);
+        }
+    }
+
+    /**
+     * Clean up temporary file
+     */
+    async cleanupTempFile(filePath) {
+        try {
+            if (!filePath) {
+                return;
+            }
+
+            // Check if file exists
+            try {
+                await fs.access(filePath);
+            } catch {
+                // File doesn't exist, nothing to clean up
+                return;
+            }
+
+            // Delete file
+            await fs.unlink(filePath);
+
+            logger.debug('Temp file cleaned up:', { filePath });
+
+        } catch (error) {
+            logger.warn('Failed to cleanup temp file:', {
                 filePath,
                 error: error.message
             });
-            return false;
         }
     }
 
     /**
-     * Save file to storage
-     * @param {Object} file - Multer file object
-     * @param {string} directory - Target directory
-     * @returns {string} Saved file path
+     * Clean up old temporary files
      */
-    async saveFile(file, directory = 'documents') {
+    async cleanupOldTempFiles(maxAge = 24 * 60 * 60 * 1000) { // 24 hours
         try {
-            const targetDir = path.join(this.uploadPath, directory);
+            const files = await fs.readdir(this.config.tempDir);
+            const now = Date.now();
+            let cleanedCount = 0;
 
-            // Ensure directory exists
-            await fs.mkdir(targetDir, { recursive: true });
+            for (const file of files) {
+                try {
+                    const filePath = path.join(this.config.tempDir, file);
+                    const stats = await fs.stat(filePath);
 
-            const fileName = `${Date.now()}-${file.originalname}`;
-            const targetPath = path.join(targetDir, fileName);
+                    // Check if file is older than maxAge
+                    if (now - stats.mtime.getTime() > maxAge) {
+                        await fs.unlink(filePath);
+                        cleanedCount++;
+                    }
+                } catch (error) {
+                    logger.warn('Failed to process temp file:', {
+                        file,
+                        error: error.message
+                    });
+                }
+            }
 
-            // Copy file to target location
-            await fs.copyFile(file.path, targetPath);
-
-            // Clean up temporary file
-            await this.cleanupFile(file.path);
-
-            logger.info('File saved successfully', {
-                originalName: file.originalname,
-                savedPath: targetPath
+            logger.info('Temp file cleanup completed:', {
+                cleanedCount,
+                totalFiles: files.length
             });
 
-            return targetPath;
+            return cleanedCount;
 
         } catch (error) {
-            logger.error('File save error:', {
-                fileName: file?.originalname,
+            logger.errorWithContext(error, {
+                operation: 'cleanupOldTempFiles',
+                tempDir: this.config.tempDir
+            });
+
+            return 0;
+        }
+    }
+
+    /**
+     * Get file metadata
+     */
+    async getFileMetadata(file) {
+        try {
+            const metadata = {
+                originalName: file.originalname,
+                mimeType: file.mimetype,
+                size: file.size,
+                extension: this.getFileExtension(file.originalname),
+                isSupported: this.config.supportedTypes.includes(file.mimetype),
+                uploadedAt: new Date().toISOString()
+            };
+
+            // Add file stats if path exists
+            if (file.path) {
+                try {
+                    const stats = await fs.stat(file.path);
+                    metadata.lastModified = stats.mtime.toISOString();
+                    metadata.created = stats.birthtime.toISOString();
+                } catch (statError) {
+                    logger.warn('Failed to get file stats:', {
+                        path: file.path,
+                        error: statError.message
+                    });
+                }
+            }
+
+            return metadata;
+
+        } catch (error) {
+            logger.errorWithContext(error, {
+                operation: 'getFileMetadata',
+                fileName: file?.originalname
+            });
+
+            throw new FileOperationError(`Failed to get file metadata: ${error.message}`);
+        }
+    }
+
+    /**
+     * Check file encoding
+     */
+    async detectEncoding(filePath) {
+        try {
+            // Read first chunk of file
+            const buffer = await fs.readFile(filePath);
+            const firstChunk = buffer.slice(0, 1024);
+
+            // Simple encoding detection
+            if (firstChunk.includes(0xEF) && firstChunk.includes(0xBB) && firstChunk.includes(0xBF)) {
+                return 'utf8'; // UTF-8 BOM
+            }
+
+            if (firstChunk.includes(0xFF) && firstChunk.includes(0xFE)) {
+                return 'utf16le'; // UTF-16 LE BOM
+            }
+
+            if (firstChunk.includes(0xFE) && firstChunk.includes(0xFF)) {
+                return 'utf16be'; // UTF-16 BE BOM
+            }
+
+            // Default to UTF-8
+            return 'utf8';
+
+        } catch (error) {
+            logger.warn('Failed to detect encoding:', {
+                filePath,
                 error: error.message
             });
 
-            throw new FileError(`Failed to save file: ${error.message}`);
+            return 'utf8'; // Default fallback
         }
     }
 
     /**
-     * Get file information
-     * @param {string} filePath - File path
-     * @returns {Object} File information
+     * Create file processing summary
      */
-    async getFileInfo(filePath) {
-        try {
-            const stats = await fs.stat(filePath);
-            const extension = path.extname(filePath).toLowerCase();
-
-            return {
-                name: path.basename(filePath),
-                path: filePath,
-                size: stats.size,
-                extension: extension,
-                mimeType: this.getMimeType(extension),
-                created: stats.birthtime,
-                modified: stats.mtime,
-                isReadable: await this.checkReadAccess(filePath)
-            };
-
-        } catch (error) {
-            throw new FileError(`Failed to get file info: ${error.message}`);
-        }
-    }
-
-    /**
-     * Check file read access
-     * @param {string} filePath - File path
-     * @returns {boolean} Has read access
-     */
-    async checkReadAccess(filePath) {
-        try {
-            await fs.access(filePath, fs.constants.R_OK);
-            return true;
-        } catch {
-            return false;
-        }
-    }
-
-    /**
-     * Get MIME type from extension
-     * @param {string} extension - File extension
-     * @returns {string} MIME type
-     */
-    getMimeType(extension) {
-        const mimeTypes = {
-            '.txt': 'text/plain',
-            '.pdf': 'application/pdf',
-            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    createProcessingSummary(file, extractedText, processingTime) {
+        return {
+            file: {
+                name: file.originalname,
+                size: file.size,
+                type: file.mimetype,
+                extension: this.getFileExtension(file.originalname)
+            },
+            extraction: {
+                textLength: extractedText.length,
+                wordCount: extractedText.split(/\s+/).length,
+                processingTime: `${processingTime}ms`,
+                success: true
+            },
+            timestamp: new Date().toISOString()
         };
-
-        return mimeTypes[extension] || 'application/octet-stream';
-    }
-
-    /**
-     * Health check for file service
-     * @returns {Object} Health status
-     */
-    async healthCheck() {
-        try {
-            // Check if upload directory is accessible
-            await fs.access(this.uploadPath, fs.constants.W_OK);
-
-            // Check available disk space (simplified)
-            const stats = await fs.stat(this.uploadPath);
-
-            return {
-                status: 'healthy',
-                uploadPath: this.uploadPath,
-                allowedTypes: this.allowedMimeTypes,
-                maxFileSize: this.maxFileSize,
-                timestamp: new Date().toISOString()
-            };
-
-        } catch (error) {
-            return {
-                status: 'unhealthy',
-                error: error.message,
-                uploadPath: this.uploadPath,
-                timestamp: new Date().toISOString()
-            };
-        }
     }
 }
+
+export default FileService;
