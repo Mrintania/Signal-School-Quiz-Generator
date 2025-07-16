@@ -1,6 +1,9 @@
 import winston from 'winston';
 import path from 'path';
-import fs from 'fs';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Define log levels
 const levels = {
@@ -8,135 +11,180 @@ const levels = {
     warn: 1,
     info: 2,
     http: 3,
-    debug: 4
+    debug: 4,
 };
 
-// Define log colors
+// Define colors for each level
 const colors = {
     error: 'red',
     warn: 'yellow',
     info: 'green',
     http: 'magenta',
-    debug: 'white'
+    debug: 'white',
 };
 
-// Set log level based on environment
-const level = () => {
-    const env = process.env.NODE_ENV || 'development';
-    return env === 'development' ? 'debug' : 'info';
-};
+// Tell winston about the colors
+winston.addColors(colors);
 
-// Create custom format
+// Define format for logs
 const format = winston.format.combine(
-    winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-    winston.format.printf(info => {
-        const { timestamp, level, message, ...rest } = info;
-        let formattedRest = '';
-
-        if (Object.keys(rest).length > 0) {
-            // Format additional data
-            formattedRest = ' | ' + JSON.stringify(rest);
+    winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss:ms' }),
+    winston.format.errors({ stack: true }),
+    winston.format.json(),
+    winston.format.printf(
+        (info) => {
+            const { timestamp, level, message, ...args } = info;
+            const ts = timestamp.slice(0, 19).replace('T', ' ');
+            return `${ts} [${level.toUpperCase()}]: ${message} ${Object.keys(args).length ? JSON.stringify(args) : ''
+                }`;
         }
-
-        // Clean stack traces for better readability
-        let formattedMessage = message;
-        if (typeof message === 'string' && message.includes('\n')) {
-            formattedMessage = message
-                .split('\n')
-                .map(line => line.trim())
-                .filter(Boolean)
-                .join('\n    ');
-        }
-
-        return `[${timestamp}] ${level.toUpperCase()}: ${formattedMessage}${formattedRest}`;
-    })
+    )
 );
 
 // Define transports
 const transports = [
     // Console transport
     new winston.transports.Console({
+        level: process.env.NODE_ENV === 'production' ? 'warn' : 'debug',
         format: winston.format.combine(
             winston.format.colorize({ all: true }),
             format
-        )
+        ),
     }),
 
-    // Error log file transport
+    // File transport for errors
     new winston.transports.File({
-        filename: path.join('logs', 'error.log'),
+        filename: path.join(__dirname, '../../logs/error.log'),
         level: 'error',
-        format: format
+        format,
+        maxsize: 5242880, // 5MB
+        maxFiles: 5,
     }),
 
-    // Combined log file transport
+    // File transport for all logs
     new winston.transports.File({
-        filename: path.join('logs', 'combined.log'),
-        format: format
-    })
+        filename: path.join(__dirname, '../../logs/combined.log'),
+        format,
+        maxsize: 5242880, // 5MB
+        maxFiles: 5,
+    }),
 ];
 
-// Create logger
+// Create logger instance
 const logger = winston.createLogger({
-    level: level(),
+    level: process.env.LOG_LEVEL || 'info',
     levels,
     format,
-    transports
+    transports,
+    exitOnError: false,
 });
 
-// Add colors to Winston
-winston.addColors(colors);
-
-// HTTP request logger
-const httpLogger = (req, res, next) => {
-    const { method, url, ip } = req;
-
-    // Log request start
-    logger.http(`${method} ${url} - Request received from ${ip}`);
-
-    // Calculate response time
-    const start = Date.now();
-
-    // Log response information when finished
-    res.on('finish', () => {
-        const duration = Date.now() - start;
-        const { statusCode } = res;
-
-        const logLevel = statusCode >= 500 ? 'error' :
-            statusCode >= 400 ? 'warn' : 'info';
-
-        logger[logLevel](
-            `${method} ${url} - Response: ${statusCode} - ${duration}ms`,
-            {
-                statusCode,
-                duration,
-                method,
-                url,
-                ip,
-                userAgent: req.headers['user-agent']
-            }
-        );
-    });
-
-    next();
+// Create stream for Morgan HTTP logging
+logger.stream = {
+    write: (message) => {
+        logger.http(message.trim());
+    },
 };
 
-// Log uncaught exceptions and unhandled rejections
-process.on('uncaughtException', (error) => {
-    logger.error('Uncaught Exception:', error);
-    // Give time to log the error before exiting
-    setTimeout(() => {
-        process.exit(1);
-    }, 1000);
-});
+// Enhanced logger methods
+logger.logRequest = (req) => {
+    logger.http('Incoming Request', {
+        method: req.method,
+        url: req.originalUrl,
+        ip: req.ip,
+        userAgent: req.get('User-Agent'),
+        userId: req.user?.userId,
+        timestamp: new Date().toISOString(),
+    });
+};
 
-process.on('unhandledRejection', (reason, promise) => {
-    logger.error('Unhandled Rejection:', reason);
-});
+logger.logResponse = (req, res, responseTime) => {
+    logger.http('Outgoing Response', {
+        method: req.method,
+        url: req.originalUrl,
+        statusCode: res.statusCode,
+        responseTime: `${responseTime}ms`,
+        userId: req.user?.userId,
+        timestamp: new Date().toISOString(),
+    });
+};
 
-// ตรวจสอบและสร้างโฟลเดอร์ logs ถ้ายังไม่มี
-if (!fs.existsSync('logs')) {
-    fs.mkdirSync('logs');
-}
+logger.logError = (error, req = null) => {
+    logger.error('Application Error', {
+        message: error.message,
+        stack: error.stack,
+        code: error.code,
+        url: req?.originalUrl,
+        method: req?.method,
+        ip: req?.ip,
+        userId: req?.user?.userId,
+        timestamp: new Date().toISOString(),
+    });
+};
 
+logger.logActivity = (action, details = {}) => {
+    logger.info('User Activity', {
+        action,
+        ...details,
+        timestamp: new Date().toISOString(),
+    });
+};
+
+// Database operation logging
+logger.logDatabase = (operation, query, params = [], duration = null) => {
+    logger.debug('Database Operation', {
+        operation,
+        query: query.substring(0, 200) + (query.length > 200 ? '...' : ''),
+        paramCount: params.length,
+        duration: duration ? `${duration}ms` : null,
+        timestamp: new Date().toISOString(),
+    });
+};
+
+// AI service logging
+logger.logAI = (operation, model, prompt, response, duration = null) => {
+    logger.info('AI Service Operation', {
+        operation,
+        model,
+        promptLength: prompt ? prompt.length : 0,
+        responseLength: response ? response.length : 0,
+        duration: duration ? `${duration}ms` : null,
+        timestamp: new Date().toISOString(),
+    });
+};
+
+// Performance logging
+logger.logPerformance = (operation, duration, metadata = {}) => {
+    const level = duration > 5000 ? 'warn' : duration > 2000 ? 'info' : 'debug';
+
+    logger[level]('Performance Metric', {
+        operation,
+        duration: `${duration}ms`,
+        ...metadata,
+        timestamp: new Date().toISOString(),
+    });
+};
+
+// Security logging
+logger.logSecurity = (event, details = {}) => {
+    logger.warn('Security Event', {
+        event,
+        ...details,
+        timestamp: new Date().toISOString(),
+    });
+};
+
+// System monitoring
+logger.logSystemHealth = (metrics) => {
+    logger.info('System Health', {
+        ...metrics,
+        timestamp: new Date().toISOString(),
+    });
+};
+
+// Create httpLogger for backward compatibility
+const httpLogger = logger;
+
+// Export both default and named exports for compatibility
+export default logger;
 export { logger, httpLogger };

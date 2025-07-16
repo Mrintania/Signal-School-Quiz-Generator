@@ -1,6 +1,8 @@
 import express from 'express';
 import QuizController from '../controllers/quizController.js';
 import { authenticateToken } from '../middlewares/auth.js';
+import { generalLimiter } from '../middlewares/rateLimiter.js';
+import { sanitizeAll } from '../utils/validator.js';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
