@@ -1,39 +1,62 @@
 {
-  "name": "backend",
-  "module": "index.js",
+  "name": "signal-school-quiz-generator-backend",
+  "version": "2.0.0",
+  "description": "Quiz Generation API for Signal School, Royal Thai Army",
   "type": "module",
-  "devDependencies": {
-    "@types/bun": "^1.2.8",
-    "nodemon": "^3.0.1"
-  },
-  "peerDependencies": {
-    "typescript": "^5.0.0"
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "nodemon src/index.js",
+    "start": "node src/index.js",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "format": "prettier --write src/",
+    "db:migrate": "node scripts/migrate.js",
+    "db:seed": "node scripts/seed.js",
+    "build": "echo 'No build step required for Node.js'",
+    "clean": "rimraf logs/* uploads/temp/*"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0",
-    "@google/generative-ai": "^0.24.1",
-    "bcrypt": "^5.1.1",
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.7",
-    "express": "^4.21.2",
-    "express-rate-limit": "^7.5.0",
-    "express-validator": "^7.2.1",
-    "helmet": "^8.1.0",
-    "hpp": "^0.2.3",
+    "@google/generative-ai": "^0.2.1",
+    "express": "^4.18.2",
+    "express-validator": "^7.0.1",
+    "express-rate-limit": "^7.1.5",
+    "mysql2": "^3.6.5",
+    "bcryptjs": "^2.4.3",
     "jsonwebtoken": "^9.0.2",
-    "multer": "^2.0.1",
-    "mysql2": "^3.14.0",
-    "node-cache": "^5.1.2",
-    "nodemailer": "^7.0.3",
-    "openai": "^4.87.3",
-    "pdf-parse": "^1.1.1",
-    "pdf2pic": "^3.2.0",
-    "winston": "^3.17.0",
-    "xss-clean": "^0.1.4"
+    "multer": "^1.4.5-lts.1",
+    "mammoth": "^1.6.0",
+    "pdf.js-extract": "^0.2.1",
+    "nodemailer": "^6.9.7",
+    "winston": "^3.11.0",
+    "helmet": "^7.1.0",
+    "cors": "^2.8.5",
+    "compression": "^1.7.4",
+    "dotenv": "^16.3.1",
+    "lodash": "^4.17.21"
   },
-  "scripts": {
-    "start": "bun run index.js",
-    "dev": "bun --watch index.js",
-    "debug": "bun --inspect --watch index.js"
+  "devDependencies": {
+    "bun-types": "^1.2.18",
+    "eslint": "^8.55.0",
+    "jest": "^29.7.0",
+    "nodemon": "^3.0.2",
+    "prettier": "^3.1.1",
+    "rimraf": "^5.0.5",
+    "supertest": "^6.3.3"
+  },
+  "keywords": [
+    "quiz",
+    "education",
+    "ai",
+    "gemini",
+    "signal-school",
+    "royal-thai-army"
+  ],
+  "author": "Signal School Development Team",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
