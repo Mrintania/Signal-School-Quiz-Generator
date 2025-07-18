@@ -21,7 +21,7 @@
     "helmet": "^8.1.0",
     "hpp": "^0.2.3",
     "jsonwebtoken": "^9.0.2",
-    "multer": "^2.0.1",
+    "multer": "^2.0.2",
     "mysql2": "^3.14.0",
     "node-cache": "^5.1.2",
     "nodemailer": "^7.0.3",
