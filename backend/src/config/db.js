@@ -1,7 +1,7 @@
 // backend/src/config/db.js
 import mysql from 'mysql2/promise';
 import configService from '../services/configService.js';
-import { logger } from '../utils/logger.js';
+import logger from '../utils/common/Logger.js'; // ใช้ default import แทน
 
 /**
  * Enhanced database configuration with connection monitoring
@@ -101,131 +101,218 @@ class Database {
   /**
    * Test database connection
    * @param {boolean} logSuccess - Whether to log successful connection
-   * @returns {Promise<boolean>} Connection success
    */
   async testConnection(logSuccess = true) {
     try {
       const connection = await this.pool.getConnection();
-
-      // Execute a simple query to verify connection
-      await connection.execute('SELECT 1 AS connection_test');
-
-      // Release the connection back to the pool
+      await connection.ping();
       connection.release();
 
-      // Update connection status
-      if (!this.isConnected) {
+      if (!this.isConnected || logSuccess) {
+        logger.info('Database connection successful');
         this.isConnected = true;
         this.connectionErrors = 0;
         this.reconnectAttempts = 0;
-
-        if (logSuccess) {
-          logger.info('Database connection established successfully');
-        }
       }
 
       return true;
     } catch (error) {
       this.isConnected = false;
       this.connectionErrors++;
-
-      logger.error(`Database connection test failed (Error #${this.connectionErrors}):`, error);
-
+      logger.error(`Database connection failed (attempt ${this.connectionErrors}):`, error);
       throw error;
     }
   }
 
   /**
-   * Schedule a reconnection attempt
+   * Schedule reconnection attempt
    */
   scheduleReconnect() {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      logger.error(`Maximum reconnection attempts (${this.maxReconnectAttempts}) reached. Giving up.`);
+      logger.error(`Max reconnection attempts (${this.maxReconnectAttempts}) reached. Giving up.`);
       return;
     }
 
     this.reconnectAttempts++;
+    const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1); // Exponential backoff
 
-    // Calculate exponential backoff delay with jitter
-    const delay = Math.min(
-      30000, // max 30 seconds
-      this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts - 1) * (1 + Math.random() * 0.2)
-    );
+    logger.info(`Scheduling database reconnection attempt ${this.reconnectAttempts} in ${delay}ms`);
 
-    logger.info(`Scheduling database reconnection attempt #${this.reconnectAttempts} in ${Math.round(delay / 1000)} seconds`);
-
-    setTimeout(() => {
-      this.initialize();
+    setTimeout(async () => {
+      try {
+        logger.info(`Attempting database reconnection (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+        await this.testConnection();
+        logger.info('Database reconnection successful');
+      } catch (error) {
+        logger.error('Database reconnection failed:', error);
+        this.scheduleReconnect();
+      }
     }, delay);
   }
 
   /**
-   * Clean up resources on shutdown
+   * Get a connection from the pool
+   * @returns {Promise<Connection>} Database connection
    */
-  cleanup() {
-    logger.info('Closing database connection pool');
-
-    // Clear health check interval
-    if (this.healthCheck) {
-      clearInterval(this.healthCheck);
-      this.healthCheck = null;
+  async getConnection() {
+    if (!this.isConnected) {
+      throw new Error('Database is not connected');
     }
 
-    // Close connection pool if it exists
-    if (this.pool) {
-      this.pool.end().catch(err => {
-        logger.error('Error closing database connection pool:', err);
-      });
+    try {
+      return await this.pool.getConnection();
+    } catch (error) {
+      logger.error('Failed to get database connection:', error);
+      this.isConnected = false;
+      this.scheduleReconnect();
+      throw error;
     }
   }
 
   /**
-   * Get the connection pool
-   * @returns {Object} MySQL connection pool
-   */
-  getPool() {
-    return this.pool;
-  }
-
-  /**
-   * Execute a query using a connection from the pool
+   * Execute a query directly on the pool
    * @param {string} sql - SQL query
    * @param {Array} params - Query parameters
    * @returns {Promise<Array>} Query results
    */
   async query(sql, params = []) {
+    if (!this.isConnected) {
+      throw new Error('Database is not connected');
+    }
+
     try {
       const [results] = await this.pool.execute(sql, params);
       return results;
     } catch (error) {
       logger.error('Database query error:', error);
-      logger.error('Query:', sql);
+      logger.error('SQL:', sql);
       logger.error('Parameters:', params);
       throw error;
     }
   }
 
   /**
-   * Get a new connection from the pool
-   * @returns {Promise<Object>} Database connection
+   * Close the database connection pool
    */
-  async getConnection() {
+  async close() {
     try {
-      return await this.pool.getConnection();
+      if (this.healthCheck) {
+        clearInterval(this.healthCheck);
+        this.healthCheck = null;
+      }
+
+      if (this.pool) {
+        await this.pool.end();
+        this.pool = null;
+      }
+
+      this.isConnected = false;
+      logger.info('Database connection pool closed');
     } catch (error) {
-      logger.error('Error getting database connection:', error);
+      logger.error('Error closing database connection pool:', error);
       throw error;
     }
+  }
+
+  /**
+   * Clean up resources
+   */
+  cleanup() {
+    if (this.healthCheck) {
+      clearInterval(this.healthCheck);
+      this.healthCheck = null;
+    }
+
+    if (this.pool) {
+      this.pool.end().catch(error => {
+        logger.error('Error during database cleanup:', error);
+      });
+    }
+  }
+
+  /**
+   * Get connection pool statistics
+   * @returns {Object} Pool statistics
+   */
+  getPoolStats() {
+    if (!this.pool) {
+      return {
+        totalConnections: 0,
+        activeConnections: 0,
+        idleConnections: 0,
+        queuedRequests: 0
+      };
+    }
+
+    return {
+      totalConnections: this.pool.pool.allConnections.length,
+      activeConnections: this.pool.pool.busyConnections.length,
+      idleConnections: this.pool.pool.freeConnections.length,
+      queuedRequests: this.pool.pool.acquiringConnections.length
+    };
+  }
+
+  /**
+   * Get database connection status
+   * @returns {Object} Connection status
+   */
+  getStatus() {
+    return {
+      isConnected: this.isConnected,
+      connectionErrors: this.connectionErrors,
+      reconnectAttempts: this.reconnectAttempts,
+      poolStats: this.getPoolStats(),
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  /**
+   * Force reconnection
+   */
+  async forceReconnect() {
+    logger.info('Forcing database reconnection...');
+
+    try {
+      await this.close();
+      this.reconnectAttempts = 0;
+      this.connectionErrors = 0;
+      this.initialize();
+      await this.testConnection();
+      logger.info('Forced database reconnection successful');
+    } catch (error) {
+      logger.error('Forced database reconnection failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Connect to database (alias for initialize for compatibility)
+   */
+  async connect() {
+    if (!this.isConnected) {
+      this.initialize();
+      await this.testConnection();
+    }
+    return this;
+  }
+
+  /**
+   * Disconnect from database (alias for close for compatibility)
+   */
+  async disconnect() {
+    return this.close();
   }
 }
 
 // Create singleton instance
 const database = new Database();
 
-// Export the database instance and convenience methods
-export const pool = database.getPool();
-export const testConnection = () => database.testConnection();
-export const dbQuery = (sql, params) => database.query(sql, params);
+// Export both the instance methods and the pool for backward compatibility
+export default database;
+export { database };
+
+// Export getConnection function for direct use
 export const getConnection = () => database.getConnection();
 
-export default database;
+// Export pool for direct queries (backward compatibility)
+export const pool = database.pool;

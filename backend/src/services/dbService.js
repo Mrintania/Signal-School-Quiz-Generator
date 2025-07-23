@@ -1,6 +1,6 @@
 // backend/src/services/dbService.js
 import { pool, getConnection } from '../config/db.js';
-import { logger } from '../utils/logger.js';
+import logger from '../utils/common/Logger.js'; // ใช้ default import แทน
 import configService from './configService.js';
 
 /**
@@ -86,419 +86,111 @@ class DBService {
      * Insert a record and return the inserted ID
      * @param {string} table - Table name
      * @param {Object} data - Data to insert
-     * @returns {Promise<number>} Inserted ID
+     * @returns {Promise<number>} Inserted record ID
      */
     static async insert(table, data) {
-        return this.withConnection(async (connection) => {
-            const columns = Object.keys(data);
-            const placeholders = columns.map(() => '?').join(', ');
-            const values = Object.values(data);
+        const fields = Object.keys(data);
+        const values = Object.values(data);
+        const placeholders = fields.map(() => '?').join(', ');
 
-            const sql = `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`;
+        const sql = `INSERT INTO ${table} (${fields.join(', ')}) VALUES (${placeholders})`;
+        const [result] = await pool.execute(sql, values);
 
-            const [result] = await connection.execute(sql, values);
-            return result.insertId;
-        });
+        return result.insertId;
     }
 
     /**
-     * Insert multiple records in a transaction
-     * @param {string} table - Table name
-     * @param {Array<Object>} records - Array of records to insert
-     * @returns {Promise<Array<number>>} Array of inserted IDs
-     */
-    static async batchInsert(table, records) {
-        if (!records || records.length === 0) {
-            return [];
-        }
-
-        return this.withTransaction(async (connection) => {
-            const insertedIds = [];
-
-            for (const record of records) {
-                const columns = Object.keys(record);
-                const placeholders = columns.map(() => '?').join(', ');
-                const values = Object.values(record);
-
-                const sql = `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`;
-
-                const [result] = await connection.execute(sql, values);
-                insertedIds.push(result.insertId);
-            }
-
-            return insertedIds;
-        });
-    }
-
-    /**
-     * Update a record
+     * Update records
      * @param {string} table - Table name
      * @param {Object} data - Data to update
-     * @param {Object} where - Where condition
+     * @param {Object} where - WHERE conditions
      * @returns {Promise<number>} Number of affected rows
      */
     static async update(table, data, where) {
-        return this.withConnection(async (connection) => {
-            const setClause = Object.keys(data).map(key => `${key} = ?`).join(', ');
-            const whereClause = Object.keys(where).map(key => `${key} = ?`).join(' AND ');
+        const setFields = Object.keys(data).map(field => `${field} = ?`).join(', ');
+        const whereFields = Object.keys(where).map(field => `${field} = ?`).join(' AND ');
 
-            const sql = `UPDATE ${table} SET ${setClause} WHERE ${whereClause}`;
-            const values = [...Object.values(data), ...Object.values(where)];
+        const sql = `UPDATE ${table} SET ${setFields} WHERE ${whereFields}`;
+        const params = [...Object.values(data), ...Object.values(where)];
 
-            const [result] = await connection.execute(sql, values);
-            return result.affectedRows;
-        });
-    }
-
-    /**
-     * Update multiple records with different values in a transaction
-     * @param {string} table - Table name
-     * @param {Array<Object>} updates - Array of {data, where} objects
-     * @returns {Promise<number>} Total number of affected rows
-     */
-    static async batchUpdate(table, updates) {
-        if (!updates || updates.length === 0) {
-            return 0;
-        }
-
-        return this.withTransaction(async (connection) => {
-            let totalAffectedRows = 0;
-
-            for (const { data, where } of updates) {
-                const setClause = Object.keys(data).map(key => `${key} = ?`).join(', ');
-                const whereClause = Object.keys(where).map(key => `${key} = ?`).join(' AND ');
-
-                const sql = `UPDATE ${table} SET ${setClause} WHERE ${whereClause}`;
-                const values = [...Object.values(data), ...Object.values(where)];
-
-                const [result] = await connection.execute(sql, values);
-                totalAffectedRows += result.affectedRows;
-            }
-
-            return totalAffectedRows;
-        });
+        const [result] = await pool.execute(sql, params);
+        return result.affectedRows;
     }
 
     /**
      * Delete records
      * @param {string} table - Table name
-     * @param {Object} where - Where condition
+     * @param {Object} where - WHERE conditions
      * @returns {Promise<number>} Number of affected rows
      */
     static async delete(table, where) {
-        return this.withConnection(async (connection) => {
-            const whereClause = Object.keys(where).map(key => `${key} = ?`).join(' AND ');
+        const whereFields = Object.keys(where).map(field => `${field} = ?`).join(' AND ');
+        const sql = `DELETE FROM ${table} WHERE ${whereFields}`;
 
-            const sql = `DELETE FROM ${table} WHERE ${whereClause}`;
-            const values = Object.values(where);
-
-            const [result] = await connection.execute(sql, values);
-            return result.affectedRows;
-        });
-    }
-
-    /**
-     * Delete multiple records in a transaction
-     * @param {string} table - Table name
-     * @param {Array<Object>} conditions - Array of where conditions
-     * @returns {Promise<number>} Total number of affected rows
-     */
-    static async batchDelete(table, conditions) {
-        if (!conditions || conditions.length === 0) {
-            return 0;
-        }
-
-        return this.withTransaction(async (connection) => {
-            let totalAffectedRows = 0;
-
-            for (const where of conditions) {
-                const whereClause = Object.keys(where).map(key => `${key} = ?`).join(' AND ');
-
-                const sql = `DELETE FROM ${table} WHERE ${whereClause}`;
-                const values = Object.values(where);
-
-                const [result] = await connection.execute(sql, values);
-                totalAffectedRows += result.affectedRows;
-            }
-
-            return totalAffectedRows;
-        });
-    }
-
-    /**
-     * Execute batch operations in a single transaction
-     * @param {Array<Function>} operations - Array of functions that perform database operations
-     * @returns {Promise<Array>} Results of operations
-     */
-    static async batch(operations) {
-        return this.withTransaction(async (connection) => {
-            const results = [];
-            for (const operation of operations) {
-                results.push(await operation(connection));
-            }
-            return results;
-        });
-    }
-
-    /**
-     * Check if a record exists
-     * @param {string} table - Table name
-     * @param {Object} where - Where condition
-     * @returns {Promise<boolean>} True if exists
-     */
-    static async exists(table, where) {
-        return this.withConnection(async (connection) => {
-            const whereClause = Object.keys(where).map(key => `${key} = ?`).join(' AND ');
-
-            const sql = `SELECT 1 FROM ${table} WHERE ${whereClause} LIMIT 1`;
-            const values = Object.values(where);
-
-            const [results] = await connection.execute(sql, values);
-            return results.length > 0;
-        });
+        const [result] = await pool.execute(sql, Object.values(where));
+        return result.affectedRows;
     }
 
     /**
      * Count records
      * @param {string} table - Table name
-     * @param {Object} where - Where condition (optional)
-     * @returns {Promise<number>} Count of records
+     * @param {Object} where - WHERE conditions (optional)
+     * @returns {Promise<number>} Record count
      */
-    static async count(table, where = null) {
-        return this.withConnection(async (connection) => {
-            let sql = `SELECT COUNT(*) as count FROM ${table}`;
-            const values = [];
+    static async count(table, where = {}) {
+        let sql = `SELECT COUNT(*) as count FROM ${table}`;
+        const params = [];
 
-            if (where) {
-                const whereClause = Object.keys(where).map(key => `${key} = ?`).join(' AND ');
-                sql += ` WHERE ${whereClause}`;
-                values.push(...Object.values(where));
-            }
+        if (Object.keys(where).length > 0) {
+            const whereFields = Object.keys(where).map(field => `${field} = ?`).join(' AND ');
+            sql += ` WHERE ${whereFields}`;
+            params.push(...Object.values(where));
+        }
 
-            const [results] = await connection.execute(sql, values);
-            return results[0].count;
-        });
+        const result = await this.queryOne(sql, params);
+        return result?.count || 0;
     }
 
     /**
-     * Get records with pagination
+     * Check if a record exists
+     * @param {string} table - Table name
+     * @param {Object} where - WHERE conditions
+     * @returns {Promise<boolean>} True if record exists
+     */
+    static async exists(table, where) {
+        const count = await this.count(table, where);
+        return count > 0;
+    }
+
+    /**
+     * Get paginated results
      * @param {string} table - Table name
      * @param {Object} options - Query options
-     * @param {Object} options.where - Where conditions (optional)
-     * @param {string} options.orderBy - Order by clause (optional)
-     * @param {number} options.limit - Limit (optional)
-     * @param {number} options.offset - Offset (optional)
-     * @returns {Promise<Object>} Query results with pagination info
+     * @returns {Promise<Object>} Paginated results with metadata
      */
     static async paginate(table, options = {}) {
         const {
-            where = null,
-            orderBy = 'id DESC',
-            limit = 100,
-            offset = 0,
-            select = '*'
-        } = options;
-
-        // Build WHERE clause
-        let whereClause = '';
-        const values = [];
-
-        if (where) {
-            const conditions = [];
-
-            for (const [key, value] of Object.entries(where)) {
-                // Handle different operators
-                if (value === null) {
-                    conditions.push(`${key} IS NULL`);
-                } else if (Array.isArray(value)) {
-                    // Handle IN operator
-                    if (value.length > 0) {
-                        conditions.push(`${key} IN (${value.map(() => '?').join(', ')})`);
-                        values.push(...value);
-                    } else {
-                        // Empty array means no matches
-                        conditions.push('FALSE');
-                    }
-                } else if (typeof value === 'object') {
-                    // Handle operators like >, <, >=, <=, LIKE
-                    for (const [operator, operand] of Object.entries(value)) {
-                        switch (operator) {
-                            case 'gt':
-                                conditions.push(`${key} > ?`);
-                                values.push(operand);
-                                break;
-                            case 'lt':
-                                conditions.push(`${key} < ?`);
-                                values.push(operand);
-                                break;
-                            case 'gte':
-                                conditions.push(`${key} >= ?`);
-                                values.push(operand);
-                                break;
-                            case 'lte':
-                                conditions.push(`${key} <= ?`);
-                                values.push(operand);
-                                break;
-                            case 'like':
-                                conditions.push(`${key} LIKE ?`);
-                                values.push(`%${operand}%`);
-                                break;
-                            case 'startsWith':
-                                conditions.push(`${key} LIKE ?`);
-                                values.push(`${operand}%`);
-                                break;
-                            case 'endsWith':
-                                conditions.push(`${key} LIKE ?`);
-                                values.push(`%${operand}`);
-                                break;
-                            case 'ne':
-                                if (operand === null) {
-                                    conditions.push(`${key} IS NOT NULL`);
-                                } else {
-                                    conditions.push(`${key} != ?`);
-                                    values.push(operand);
-                                }
-                                break;
-                            default:
-                                // Unknown operator, treat as equality
-                                conditions.push(`${key} = ?`);
-                                values.push(operand);
-                        }
-                    }
-                } else {
-                    // Simple equality
-                    conditions.push(`${key} = ?`);
-                    values.push(value);
-                }
-            }
-
-            if (conditions.length > 0) {
-                whereClause = `WHERE ${conditions.join(' AND ')}`;
-            }
-        }
-
-        // Execute count query
-        const countSql = `SELECT COUNT(*) as total FROM ${table} ${whereClause}`;
-        const countResult = await this.queryOne(countSql, [...values]);
-        const total = countResult ? countResult.total : 0;
-
-        // Execute data query with pagination
-        const dataSql = `SELECT ${select} FROM ${table} ${whereClause} ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
-        const data = await this.query(dataSql, [...values, limit, offset]);
-
-        // Return results with pagination info
-        return {
-            data,
-            pagination: {
-                total,
-                limit,
-                offset,
-                page: Math.floor(offset / limit) + 1,
-                totalPages: Math.ceil(total / limit)
-            }
-        };
-    }
-
-    /**
-     * Execute a join query with pagination
-     * @param {Object} options - Query options
-     * @param {string} options.table - Main table
-     * @param {Array<Object>} options.joins - Join clauses
-     * @param {string} options.select - Select statement
-     * @param {Object} options.where - Where conditions (optional)
-     * @param {string} options.orderBy - Order by clause (optional)
-     * @param {number} options.limit - Limit (optional)
-     * @param {number} options.offset - Offset (optional)
-     * @returns {Promise<Object>} Query results with pagination info
-     */
-    static async joinWithPagination(options) {
-        const {
-            table,
-            joins = [],
             select = '*',
-            where = null,
-            orderBy = `${table}.id DESC`,
-            limit = 100,
+            where = {},
+            orderBy = 'id DESC',
+            limit = 10,
             offset = 0
         } = options;
 
-        // Build JOIN clauses
-        const joinClauses = joins.map(join => {
-            const { type = 'INNER', table: joinTable, on } = join;
-            return `${type} JOIN ${joinTable} ON ${on}`;
-        }).join(' ');
-
-        // Build WHERE clause
-        let whereClause = '';
+        // Build base query parts
+        let baseWhere = '';
         const values = [];
 
-        if (where) {
-            const conditions = [];
-
-            for (const [key, value] of Object.entries(where)) {
-                if (value === null) {
-                    conditions.push(`${key} IS NULL`);
-                } else if (Array.isArray(value)) {
-                    if (value.length > 0) {
-                        conditions.push(`${key} IN (${value.map(() => '?').join(', ')})`);
-                        values.push(...value);
-                    } else {
-                        conditions.push('FALSE');
-                    }
-                } else if (typeof value === 'object') {
-                    for (const [operator, operand] of Object.entries(value)) {
-                        switch (operator) {
-                            case 'gt':
-                                conditions.push(`${key} > ?`);
-                                values.push(operand);
-                                break;
-                            case 'lt':
-                                conditions.push(`${key} < ?`);
-                                values.push(operand);
-                                break;
-                            case 'gte':
-                                conditions.push(`${key} >= ?`);
-                                values.push(operand);
-                                break;
-                            case 'lte':
-                                conditions.push(`${key} <= ?`);
-                                values.push(operand);
-                                break;
-                            case 'like':
-                                conditions.push(`${key} LIKE ?`);
-                                values.push(`%${operand}%`);
-                                break;
-                            case 'ne':
-                                if (operand === null) {
-                                    conditions.push(`${key} IS NOT NULL`);
-                                } else {
-                                    conditions.push(`${key} != ?`);
-                                    values.push(operand);
-                                }
-                                break;
-                            default:
-                                conditions.push(`${key} = ?`);
-                                values.push(operand);
-                        }
-                    }
-                } else {
-                    conditions.push(`${key} = ?`);
-                    values.push(value);
-                }
-            }
-
-            if (conditions.length > 0) {
-                whereClause = `WHERE ${conditions.join(' AND ')}`;
-            }
+        if (Object.keys(where).length > 0) {
+            baseWhere = 'WHERE ' + Object.keys(where).map(field => `${field} = ?`).join(' AND ');
+            values.push(...Object.values(where));
         }
 
-        // Build base query parts
-        const baseFrom = `FROM ${table} ${joinClauses}`;
-        const baseWhere = whereClause;
+        const baseFrom = `FROM ${table}`;
 
-        // Execute count query
-        const countSql = `SELECT COUNT(DISTINCT ${table}.id) as total ${baseFrom} ${baseWhere}`;
-        const countResult = await this.queryOne(countSql, [...values]);
+        // Count total records
+        const countSql = `SELECT COUNT(*) as total ${baseFrom} ${baseWhere}`;
+        const countResult = await this.queryOne(countSql, values);
         const total = countResult ? countResult.total : 0;
 
         // Execute data query with pagination
@@ -594,65 +286,55 @@ class DBService {
     }
 
     /**
-     * Get database size information
-     * @returns {Promise<Object>} Database size information
+     * Check database connection health
+     * @returns {Promise<Object>} Connection health status
      */
-    static async getDatabaseSize() {
-        const databaseName = configService.get('database.name');
+    static async checkHealth() {
+        try {
+            const startTime = Date.now();
+            await this.query('SELECT 1 as ping');
+            const responseTime = Date.now() - startTime;
 
-        const sql = `
-      SELECT 
-        SUM(data_length) as dataSize,
-        SUM(index_length) as indexSize,
-        SUM(data_length + index_length) as totalSize
-      FROM 
-        information_schema.tables
-      WHERE 
-        table_schema = ?
-    `;
-
-        const result = await this.queryOne(sql, [databaseName]);
-
-        return {
-            dataSize: result.dataSize || 0,
-            indexSize: result.indexSize || 0,
-            totalSize: result.totalSize || 0,
-            dataSizeMB: Math.round((result.dataSize || 0) / (1024 * 1024) * 100) / 100,
-            indexSizeMB: Math.round((result.indexSize || 0) / (1024 * 1024) * 100) / 100,
-            totalSizeMB: Math.round((result.totalSize || 0) / (1024 * 1024) * 100) / 100
-        };
+            return {
+                status: 'healthy',
+                responseTime,
+                timestamp: new Date().toISOString()
+            };
+        } catch (error) {
+            logger.error('Database health check failed:', error);
+            return {
+                status: 'unhealthy',
+                error: error.message,
+                timestamp: new Date().toISOString()
+            };
+        }
     }
 
     /**
-     * Get connection pool status
-     * @returns {Promise<Object>} Connection pool status
+     * Get database performance metrics
+     * @returns {Promise<Object>} Performance metrics
      */
-    static async getPoolStatus() {
-        // This is a custom implementation for MySQL2
-        // The actual implementation might vary depending on the connection pool library
+    static async getPerformanceMetrics() {
         try {
-            // Get pool status using internal properties (might break with library updates)
-            // For production use, it's better to use a monitoring solution or APM tool
-            const poolStats = {
-                connections: pool.pool ? pool.pool._allConnections.length : 0,
-                idle: pool.pool ? pool.pool._freeConnections.length : 0,
-                connectionLimit: configService.get('database.connectionLimit', 10)
-            };
+            const queries = [
+                'SHOW STATUS LIKE "Threads_connected"',
+                'SHOW STATUS LIKE "Questions"',
+                'SHOW STATUS LIKE "Uptime"',
+                'SHOW STATUS LIKE "Slow_queries"'
+            ];
 
-            poolStats.active = poolStats.connections - poolStats.idle;
-            poolStats.usagePercent = Math.round((poolStats.active / poolStats.connectionLimit) * 100);
+            const metrics = {};
+            for (const query of queries) {
+                const results = await this.query(query);
+                results.forEach(row => {
+                    metrics[row.Variable_name] = row.Value;
+                });
+            }
 
-            return poolStats;
+            return metrics;
         } catch (error) {
-            logger.error('Error getting pool status:', error);
-            return {
-                connections: -1,
-                idle: -1,
-                active: -1,
-                connectionLimit: configService.get('database.connectionLimit', 10),
-                usagePercent: -1,
-                error: error.message
-            };
+            logger.error('Failed to get database performance metrics:', error);
+            return {};
         }
     }
 }

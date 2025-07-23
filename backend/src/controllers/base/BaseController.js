@@ -1,34 +1,37 @@
-import logger from '../../utils/logger.js';
-import { ResponseDTO } from '../../dto/common/ResponseDTO.js';
-import { ValidationError, NotFoundError, UnauthorizedError } from '../../errors/CustomErrors.js';
+// backend/src/controllers/base/BaseController.js
+import logger from '../../utils/common/Logger.js';
+import { ResponseDTO } from '../../dtos/ResponseDTO.js';
+import {
+    ValidationError,
+    NotFoundError,
+    UnauthorizedError,
+    DatabaseError,
+    AIServiceError
+} from '../../errors/CustomErrors.js';
 
 /**
  * Base Controller Class
- * ใช้เป็น parent class สำหรับ controllers อื่นๆ
- * มี common functionality ที่ controllers ทุกตัวต้องใช้
+ * ให้ method พื้นฐานสำหรับ controller อื่นๆ ใช้
  */
 export class BaseController {
     constructor() {
-        // Bind methods to preserve 'this' context
-        this.handleError = this.handleError.bind(this);
-        this.sendSuccess = this.sendSuccess.bind(this);
-        this.sendError = this.sendError.bind(this);
+        this.logger = logger;
     }
 
     /**
      * ส่ง success response แบบมาตรฐาน
      * @param {Object} res - Express response object
-     * @param {*} data - ข้อมูลที่จะส่งกลับ
-     * @param {string} message - ข้อความ
+     * @param {*} data - Data to send
+     * @param {string} message - Success message
      * @param {number} statusCode - HTTP status code
      */
     sendSuccess(res, data = null, message = 'Success', statusCode = 200) {
         const response = new ResponseDTO(true, data, message);
 
-        // Log success for audit
-        logger.info(`Success Response: ${message}`, {
+        // Log successful response for debugging
+        this.logger.info(`Success Response: ${message}`, {
             statusCode,
-            data: data ? 'Data included' : 'No data',
+            hasData: data ? 'Data included' : 'No data',
             timestamp: new Date().toISOString()
         });
 
@@ -51,7 +54,7 @@ export class BaseController {
         }
 
         // Log error for debugging
-        logger.error(`Error Response: ${message}`, {
+        this.logger.error(`Error Response: ${message}`, {
             statusCode,
             error: error?.message || error,
             stack: error?.stack,
@@ -86,170 +89,214 @@ export class BaseController {
             return this.sendError(res, 'Duplicate entry found', 409, error);
         }
 
-        if (error.code === 'ER_NO_REFERENCED_ROW_2') {
-            return this.sendError(res, 'Referenced record not found', 400, error);
+        if (error instanceof DatabaseError) {
+            return this.sendError(res, error.message, 500, error);
         }
 
-        // Handle AI service errors
-        if (error.code === 'AI_SERVICE_ERROR') {
-            return this.sendError(res, 'AI service temporarily unavailable', 503, error);
+        if (error instanceof AIServiceError) {
+            return this.sendError(res, error.message, 503, error);
         }
 
-        // Default server error
-        logger.error('Unhandled error:', error);
+        // Handle generic errors
+        this.logger.error('Unhandled error in controller:', {
+            name: error.name,
+            message: error.message,
+            stack: error.stack,
+            timestamp: new Date().toISOString()
+        });
+
         return this.sendError(res, defaultMessage, 500, error);
     }
 
     /**
-     * ตรวจสอบ user permissions
-     * @param {Object} user - User object จาก JWT
-     * @param {string|Array} requiredRoles - Required roles
-     * @returns {boolean}
-     */
-    checkPermissions(user, requiredRoles) {
-        if (!user) return false;
-
-        if (typeof requiredRoles === 'string') {
-            requiredRoles = [requiredRoles];
-        }
-
-        return requiredRoles.includes(user.role);
-    }
-
-    /**
-     * ตรวจสอบว่า user เป็นเจ้าของ resource หรือไม่
-     * @param {Object} user - User object
-     * @param {string} resourceUserId - User ID ของ resource
-     * @returns {boolean}
-     */
-    checkOwnership(user, resourceUserId) {
-        return user && user.userId === resourceUserId;
-    }
-
-    /**
-     * ตรวจสอบ pagination parameters
-     * @param {Object} query - Query parameters
-     * @returns {Object} Validated pagination object
-     */
-    validatePagination(query) {
-        const page = Math.max(1, parseInt(query.page) || 1);
-        const limit = Math.min(100, Math.max(1, parseInt(query.limit) || 10));
-        const offset = (page - 1) * limit;
-
-        return { page, limit, offset };
-    }
-
-    /**
-     * สร้าง response metadata สำหรับ pagination
-     * @param {number} total - Total records
-     * @param {number} page - Current page
-     * @param {number} limit - Records per page
-     * @returns {Object} Pagination metadata
-     */
-    createPaginationMeta(total, page, limit) {
-        const totalPages = Math.ceil(total / limit);
-
-        return {
-            total,
-            page,
-            limit,
-            totalPages,
-            hasNext: page < totalPages,
-            hasPrev: page > 1
-        };
-    }
-
-    /**
-     * Wrapper สำหรับ async controller methods
-     * จัดการ error handling อัตโนมัติ
-     * @param {Function} fn - Async controller method
-     * @returns {Function} Wrapped function
-     */
-    asyncHandler(fn) {
-        return async (req, res, next) => {
-            try {
-                await fn(req, res, next);
-            } catch (error) {
-                this.handleError(res, error);
-            }
-        };
-    }
-
-    /**
-     * ตรวจสอบ required fields
-     * @param {Object} data - Data object to validate
+     * Validate required fields in request body
+     * @param {Object} body - Request body
      * @param {Array} requiredFields - Array of required field names
-     * @throws {ValidationError} If validation fails
+     * @throws {ValidationError} If any required field is missing
      */
-    validateRequiredFields(data, requiredFields) {
-        const missingFields = requiredFields.filter(field => {
-            const value = data[field];
-            return value === undefined || value === null || value === '';
-        });
+    validateRequiredFields(body, requiredFields) {
+        const missingFields = [];
+
+        for (const field of requiredFields) {
+            if (!body[field] || (typeof body[field] === 'string' && body[field].trim() === '')) {
+                missingFields.push(field);
+            }
+        }
 
         if (missingFields.length > 0) {
-            throw new ValidationError(`Missing required fields: ${missingFields.join(', ')}`);
+            throw new ValidationError(
+                `Missing required fields: ${missingFields.join(', ')}`
+            );
         }
     }
 
     /**
-     * Sanitize user input
-     * @param {Object} data - Input data
-     * @returns {Object} Sanitized data
+     * Sanitize data before sending to client
+     * @param {*} data - Data to sanitize
+     * @returns {*} Sanitized data
      */
-    sanitizeInput(data) {
-        if (typeof data !== 'object' || data === null) {
-            return data;
+    sanitizeData(data) {
+        if (!data) return data;
+
+        // If it's an array, sanitize each item
+        if (Array.isArray(data)) {
+            return data.map(item => this.sanitizeData(item));
         }
 
-        const sanitized = {};
+        // If it's an object, remove sensitive fields
+        if (typeof data === 'object') {
+            const sanitized = { ...data };
 
-        for (const [key, value] of Object.entries(data)) {
-            if (typeof value === 'string') {
-                // Basic XSS protection
-                sanitized[key] = value
-                    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-                    .trim();
-            } else if (Array.isArray(value)) {
-                sanitized[key] = value.map(item => this.sanitizeInput(item));
-            } else if (typeof value === 'object' && value !== null) {
-                sanitized[key] = this.sanitizeInput(value);
-            } else {
-                sanitized[key] = value;
+            // Remove sensitive fields
+            const sensitiveFields = ['password', 'token', 'secret', 'key', 'apiKey'];
+            sensitiveFields.forEach(field => {
+                if (sanitized[field]) {
+                    delete sanitized[field];
+                }
+            });
+
+            return sanitized;
+        }
+
+        return data;
+    }
+
+    /**
+     * Parse pagination parameters from query
+     * @param {Object} query - Request query object
+     * @returns {Object} Pagination parameters
+     */
+    parsePagination(query) {
+        const page = parseInt(query.page) || 1;
+        const limit = parseInt(query.limit) || 10;
+        const offset = (page - 1) * limit;
+
+        // Ensure reasonable limits
+        const maxLimit = 100;
+        const actualLimit = limit > maxLimit ? maxLimit : limit;
+
+        return {
+            page: page > 0 ? page : 1,
+            limit: actualLimit,
+            offset: offset >= 0 ? offset : 0
+        };
+    }
+
+    /**
+     * Create pagination response
+     * @param {Array} data - Data array
+     * @param {number} total - Total count
+     * @param {Object} pagination - Pagination parameters
+     * @returns {Object} Paginated response
+     */
+    createPaginatedResponse(data, total, pagination) {
+        const totalPages = Math.ceil(total / pagination.limit);
+
+        return {
+            data: this.sanitizeData(data),
+            pagination: {
+                currentPage: pagination.page,
+                totalPages,
+                pageSize: pagination.limit,
+                totalItems: total,
+                hasNextPage: pagination.page < totalPages,
+                hasPreviousPage: pagination.page > 1
             }
-        }
-
-        return sanitized;
+        };
     }
 
     /**
-     * Log user activity
-     * @param {Object} user - User object
-     * @param {string} action - Action performed
-     * @param {Object} details - Additional details
+     * Extract user information from request
+     * @param {Object} req - Express request object
+     * @returns {Object} User information
      */
-    logActivity(user, action, details = {}) {
-        logger.info('User Activity', {
-            userId: user?.userId,
-            username: user?.username,
-            action,
-            details,
-            timestamp: new Date().toISOString(),
-            ip: details.ip
+    getUserFromRequest(req) {
+        if (!req.user) {
+            throw new UnauthorizedError('User not found in request');
+        }
+
+        return {
+            userId: req.user.userId,
+            email: req.user.email,
+            role: req.user.role,
+            permissions: req.user.permissions || []
+        };
+    }
+
+    /**
+     * Check if user has required permission
+     * @param {Object} user - User object
+     * @param {string} requiredPermission - Required permission
+     * @throws {UnauthorizedError} If user doesn't have permission
+     */
+    checkPermission(user, requiredPermission) {
+        if (!user.permissions || !user.permissions.includes(requiredPermission)) {
+            throw new UnauthorizedError(
+                `Access denied. Required permission: ${requiredPermission}`
+            );
+        }
+    }
+
+    /**
+     * Async wrapper for controller methods
+     * @param {Function} fn - Controller method
+     * @returns {Function} Wrapped method
+     */
+    asyncWrapper(fn) {
+        return (req, res, next) => {
+            Promise.resolve(fn(req, res, next)).catch(next);
+        };
+    }
+
+    /**
+     * Format date for response
+     * @param {Date} date - Date to format
+     * @returns {string} Formatted date string
+     */
+    formatDate(date) {
+        if (!date) return null;
+        return new Date(date).toISOString();
+    }
+
+    /**
+     * Parse sort parameters from query
+     * @param {Object} query - Request query object
+     * @param {Array} allowedFields - Allowed fields for sorting
+     * @returns {Object} Sort parameters
+     */
+    parseSortParams(query, allowedFields = []) {
+        const sortBy = query.sortBy || 'createdAt';
+        const sortOrder = query.sortOrder === 'asc' ? 'asc' : 'desc';
+
+        // Validate sort field
+        if (allowedFields.length > 0 && !allowedFields.includes(sortBy)) {
+            throw new ValidationError(
+                `Invalid sort field. Allowed fields: ${allowedFields.join(', ')}`
+            );
+        }
+
+        return { sortBy, sortOrder };
+    }
+
+    /**
+     * Create standardized error for missing resource
+     * @param {string} resourceName - Name of the resource
+     * @param {string} identifier - Resource identifier
+     * @throws {NotFoundError}
+     */
+    throwNotFound(resourceName, identifier) {
+        throw new NotFoundError(`${resourceName} with ID '${identifier}' not found`);
+    }
+
+    /**
+     * Log controller action
+     * @param {string} action - Action name
+     * @param {Object} context - Additional context
+     */
+    logAction(action, context = {}) {
+        this.logger.info(`Controller Action: ${action}`, {
+            ...context,
+            timestamp: new Date().toISOString()
         });
     }
-
-    /**
-     * Rate limiting check (helper method)
-     * @param {string} key - Rate limit key
-     * @param {number} limit - Rate limit
-     * @param {number} window - Time window in seconds
-     */
-    async checkRateLimit(key, limit, window) {
-        // This would integrate with Redis or memory store
-        // Implementation depends on your rate limiting strategy
-        return { allowed: true, remaining: limit - 1 };
-    }
 }
-
-export default BaseController;

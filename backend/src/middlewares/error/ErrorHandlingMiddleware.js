@@ -1,11 +1,11 @@
 // backend/src/middlewares/error/ErrorHandlingMiddleware.js
 import logger from '../../utils/common/Logger.js';
 import { ResponseBuilder } from '../../utils/common/ResponseBuilder.js';
-import { 
-    AppError, 
-    ValidationError, 
-    UnauthorizedError, 
-    NotFoundError, 
+import {
+    AppError,
+    ValidationError,
+    UnauthorizedError,
+    NotFoundError,
     DatabaseError,
     AIServiceError,
     FileOperationError,
@@ -20,7 +20,7 @@ import {
 export class ErrorHandlingMiddleware {
     constructor() {
         this.responseBuilder = new ResponseBuilder();
-        
+
         // Error code mapping
         this.errorCodeMap = {
             'ValidationError': 400,
@@ -68,13 +68,39 @@ export class ErrorHandlingMiddleware {
         } catch (handlingError) {
             // If error handling itself fails, send minimal error response
             logger.error('Error in error handler:', handlingError);
-            
+
             res.status(500).json({
                 success: false,
                 message: 'Internal server error occurred while handling the request',
                 error: 'HANDLER_ERROR',
                 timestamp: new Date().toISOString()
             });
+        }
+    }
+
+    /**
+     * Log error with appropriate level and context
+     */
+    logError(error, req) {
+        const logContext = {
+            name: error.name,
+            message: error.message,
+            stack: error.stack,
+            path: req.path,
+            method: req.method,
+            ip: req.ip,
+            userAgent: req.get('User-Agent'),
+            userId: req.user?.userId,
+            timestamp: new Date().toISOString()
+        };
+
+        // Log based on error severity
+        if (error.statusCode >= 500) {
+            logger.error('Server Error:', logContext);
+        } else if (error.statusCode >= 400) {
+            logger.warn('Client Error:', logContext);
+        } else {
+            logger.info('Request Error:', logContext);
         }
     }
 
@@ -121,7 +147,7 @@ export class ErrorHandlingMiddleware {
      */
     handleCustomError(error, req) {
         const statusCode = this.errorCodeMap[error.constructor.name] || error.statusCode || 500;
-        
+
         const body = {
             success: false,
             message: error.message || 'An error occurred',
@@ -167,7 +193,7 @@ export class ErrorHandlingMiddleware {
     handleDatabaseError(error, req) {
         let statusCode = 500;
         let message = 'Database operation failed';
-        
+
         // Map specific database errors
         switch (error.code) {
             case 'ER_DUP_ENTRY':
@@ -210,7 +236,7 @@ export class ErrorHandlingMiddleware {
      */
     handleJWTError(error, req) {
         let message = 'Authentication failed';
-        
+
         if (error.name === 'TokenExpiredError') {
             message = 'Token has expired';
         } else if (error.name === 'JsonWebTokenError') {
@@ -280,12 +306,10 @@ export class ErrorHandlingMiddleware {
      */
     handleGenericError(error, req) {
         const statusCode = 500;
-        
+
         const body = {
             success: false,
-            message: this.isDevelopment ? 
-                (error.message || 'Internal server error') : 
-                'An unexpected error occurred',
+            message: this.isDevelopment ? error.message : 'Internal server error',
             error: 'INTERNAL_ERROR'
         };
 
@@ -295,65 +319,6 @@ export class ErrorHandlingMiddleware {
         }
 
         return { statusCode, body };
-    }
-
-    /**
-     * Log errors with appropriate level
-     */
-    logError(error, req) {
-        const logData = {
-            name: error.name,
-            message: error.message,
-            path: req.path,
-            method: req.method,
-            userId: req.user?.userId,
-            userAgent: req.get('User-Agent'),
-            ip: req.ip,
-            timestamp: new Date().toISOString()
-        };
-
-        // Add error details
-        if (error.statusCode) {
-            logData.statusCode = error.statusCode;
-        }
-
-        if (error.details) {
-            logData.details = error.details;
-        }
-
-        // Add stack trace for server errors
-        if (!error.statusCode || error.statusCode >= 500) {
-            logData.stack = error.stack;
-        }
-
-        // Log with appropriate level
-        if (!error.statusCode || error.statusCode >= 500) {
-            logger.error('Server Error:', logData);
-        } else if (error.statusCode >= 400) {
-            logger.warn('Client Error:', logData);
-        } else {
-            logger.info('Error:', logData);
-        }
-
-        // Log to security log for authentication/authorization errors
-        if (error.statusCode === 401 || error.statusCode === 403) {
-            logger.security('unauthorized-access', {
-                userId: req.user?.userId,
-                path: req.path,
-                method: req.method,
-                ip: req.ip,
-                userAgent: req.get('User-Agent'),
-                error: error.message
-            });
-        }
-    }
-
-    /**
-     * Handle 404 errors (route not found)
-     */
-    handleNotFound(req, res, next) {
-        const error = new NotFoundError(`Route not found: ${req.method} ${req.path}`);
-        this.handle(error, req, res, next);
     }
 
     /**
@@ -423,7 +388,7 @@ export class ErrorHandlingMiddleware {
             // Add context information
             error.boundary = name;
             error.timestamp = new Date().toISOString();
-            
+
             // Log boundary error
             logger.error(`Error in ${name} boundary:`, {
                 name: error.name,
@@ -478,5 +443,5 @@ const errorHandlingMiddleware = new ErrorHandlingMiddleware();
 // Initialize global handlers
 errorHandlingMiddleware.initializeGlobalHandlers();
 
+// Export the singleton instance as default
 export default errorHandlingMiddleware;
-export { ErrorHandlingMiddleware };

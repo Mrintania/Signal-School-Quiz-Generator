@@ -1,3 +1,4 @@
+// backend/src/index.js
 /**
  * Main Application Index File
  * Entry point สำหรับ backend application
@@ -13,39 +14,79 @@ import rateLimit from 'express-rate-limit';
 import { database } from './config/index.js';
 
 // Import middleware
-import { 
-    ErrorHandlingMiddleware,
-    authenticateToken,
-    rateLimiter
-} from './middlewares/index.js';
-
-// Import routes
-import {
-    newQuizRoutes,
-    authRoutes,
-    userRoutes,
-    adminRoutes,
-    dashboardRoutes,
-    schoolRoutes
-} from './routes/index.js';
-
-// Import services
-import { CacheService } from './services/index.js';
+import errorHandlingMiddleware from './middlewares/error/ErrorHandlingMiddleware.js';
+import { authenticateToken } from './middlewares/auth.js';
+import { rateLimiter } from './middlewares/rateLimiter.js';
 
 // Import utils
-import { Logger } from './utils/index.js';
+import logger from './utils/common/Logger.js';
+
+// Import services
+import { CacheService } from './services/common/CacheService.js';
+
+/**
+ * Dynamic Route Importer
+ * นำเข้า routes โดยตรวจสอบว่าไฟล์มีอยู่จริงหรือไม่
+ */
+async function importRoutes() {
+    const routes = {};
+
+    try {
+        // Import only existing route files
+        const { default: newQuizRoutes } = await import('./routes/quiz/newQuizRoutes.js');
+        routes.newQuizRoutes = newQuizRoutes;
+    } catch (error) {
+        logger.warn('newQuizRoutes not found, skipping...');
+    }
+
+    try {
+        const { default: authRoutes } = await import('./routes/authRoutes.js');
+        routes.authRoutes = authRoutes;
+    } catch (error) {
+        logger.warn('authRoutes not found, skipping...');
+    }
+
+    try {
+        const { default: userRoutes } = await import('./routes/userRoutes.js');
+        routes.userRoutes = userRoutes;
+    } catch (error) {
+        logger.warn('userRoutes not found, skipping...');
+    }
+
+    try {
+        const { default: adminRoutes } = await import('./routes/adminRoutes.js');
+        routes.adminRoutes = adminRoutes;
+    } catch (error) {
+        logger.warn('adminRoutes not found, skipping...');
+    }
+
+    try {
+        const { default: dashboardRoutes } = await import('./routes/dashboardRoutes.js');
+        routes.dashboardRoutes = dashboardRoutes;
+    } catch (error) {
+        logger.warn('dashboardRoutes not found, skipping...');
+    }
+
+    try {
+        const { default: schoolRoutes } = await import('./routes/schoolRoutes.js');
+        routes.schoolRoutes = schoolRoutes;
+    } catch (error) {
+        logger.warn('schoolRoutes not found, skipping...');
+    }
+
+    return routes;
+}
 
 /**
  * Application Factory
  * สร้าง Express application พร้อม configuration
  */
-export class ApplicationFactory {
-    static create() {
+class ApplicationFactory {
+    static async create() {
         const app = express();
 
         // Initialize services
         const cacheService = new CacheService();
-        const errorHandler = new ErrorHandlingMiddleware();
 
         // Security middleware
         app.use(helmet({
@@ -72,27 +113,32 @@ export class ApplicationFactory {
         app.use(compression());
 
         // Body parsing
-        app.use(express.json({ 
+        app.use(express.json({
             limit: '10mb',
             verify: (req, res, buf) => {
                 // Store raw body for webhook verification if needed
                 req.rawBody = buf;
             }
         }));
-        app.use(express.urlencoded({ 
-            extended: true, 
-            limit: '10mb' 
+        app.use(express.urlencoded({
+            extended: true,
+            limit: '10mb'
         }));
 
         // Request logging
         app.use((req, res, next) => {
             const start = Date.now();
-            
+
             res.on('finish', () => {
                 const duration = Date.now() - start;
-                Logger.apiAccess(req, res, duration);
+                logger.info(`${req.method} ${req.path}`, {
+                    statusCode: res.statusCode,
+                    duration: `${duration}ms`,
+                    ip: req.ip,
+                    userAgent: req.get('User-Agent')
+                });
             });
-            
+
             next();
         });
 
@@ -103,133 +149,147 @@ export class ApplicationFactory {
             message: {
                 success: false,
                 message: 'Too many requests from this IP, please try again later.',
-                retryAfter: '15 minutes'
+                error: 'RATE_LIMIT_EXCEEDED'
             },
             standardHeaders: true,
-            legacyHeaders: false
+            legacyHeaders: false,
         }));
 
         // Health check endpoint
         app.get('/health', (req, res) => {
-            res.json({
-                status: 'healthy',
+            res.status(200).json({
+                success: true,
+                message: 'Signal School Quiz Generator Backend is running',
                 timestamp: new Date().toISOString(),
-                version: process.env.npm_package_version || '1.0.0',
                 environment: process.env.NODE_ENV || 'development',
-                services: {
-                    database: 'connected', // This should be checked properly
-                    cache: cacheService.getSize() >= 0 ? 'connected' : 'disconnected'
-                }
+                version: process.env.APP_VERSION || '2.0.0'
             });
         });
 
-        // API routes
-        app.use('/api/auth', authRoutes);
-        app.use('/api/users', userRoutes);
-        app.use('/api/admin', adminRoutes);
-        app.use('/api/dashboard', dashboardRoutes);
-        app.use('/api/schools', schoolRoutes);
+        // Import and setup routes dynamically
+        const routes = await importRoutes();
 
-        // Quiz routes (new architecture)
-        app.use('/api/quiz', newQuizRoutes);
+        // API Routes - only register if imported successfully
+        if (routes.authRoutes) {
+            app.use('/api/auth', routes.authRoutes);
+            logger.info('Auth routes registered');
+        }
 
-        // Static files
-        app.use('/uploads', express.static('uploads'));
+        if (routes.userRoutes) {
+            app.use('/api/users', routes.userRoutes);
+            logger.info('User routes registered');
+        }
 
-        // 404 handler
-        app.use('*', (req, res) => {
-            res.status(404).json({
-                success: false,
-                message: 'API endpoint not found',
-                path: req.originalUrl,
-                method: req.method,
+        if (routes.newQuizRoutes) {
+            app.use('/api/quiz', routes.newQuizRoutes);
+            logger.info('Quiz routes registered');
+        }
+
+        if (routes.adminRoutes) {
+            app.use('/api/admin', routes.adminRoutes);
+            logger.info('Admin routes registered');
+        }
+
+        if (routes.dashboardRoutes) {
+            app.use('/api/dashboard', routes.dashboardRoutes);
+            logger.info('Dashboard routes registered');
+        }
+
+        if (routes.schoolRoutes) {
+            app.use('/api/school', routes.schoolRoutes);
+            logger.info('School routes registered');
+        }
+
+        // Basic test route
+        app.get('/api/test', (req, res) => {
+            res.status(200).json({
+                success: true,
+                message: 'API is working',
                 timestamp: new Date().toISOString()
             });
         });
 
-        // Global error handler
-        app.use(errorHandler.create());
+        // 404 handler for unknown routes
+        app.use('*', (req, res) => {
+            res.status(404).json({
+                success: false,
+                message: `Route ${req.originalUrl} not found`,
+                error: 'NOT_FOUND'
+            });
+        });
+
+        // Global error handling middleware (must be last)
+        app.use(errorHandlingMiddleware.create());
 
         return app;
     }
+}
 
-    /**
-     * Start the application
-     */
-    static async start(port = process.env.PORT || 3001) {
-        try {
-            const app = this.create();
+/**
+ * Start the server
+ */
+async function startServer() {
+    try {
+        // Initialize database connection
+        await database.connect();
+        logger.info('Database connected successfully');
 
-            // Test database connection
-            await this.testDatabaseConnection();
+        // Create Express application
+        const app = await ApplicationFactory.create();
 
-            // Start server
-            const server = app.listen(port, () => {
-                Logger.info(`🚀 Signal School Quiz Generator API started on port ${port}`, {
-                    environment: process.env.NODE_ENV || 'development',
-                    port,
-                    timestamp: new Date().toISOString()
-                });
-            });
+        // Start server
+        const PORT = process.env.PORT || 8000;
+        const server = app.listen(PORT, () => {
+            logger.info(`🚀 Signal School Quiz Generator Backend started`);
+            logger.info(`📍 Server running on port ${PORT}`);
+            logger.info(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+            logger.info(`🔗 API Base URL: http://localhost:${PORT}/api`);
+            logger.info(`💚 Health Check: http://localhost:${PORT}/health`);
+        });
 
-            // Graceful shutdown
-            this.setupGracefulShutdown(server);
+        // Graceful shutdown
+        const gracefulShutdown = async (signal) => {
+            logger.info(`Received ${signal}. Starting graceful shutdown...`);
 
-            return server;
+            server.close(async () => {
+                logger.info('HTTP server closed');
 
-        } catch (error) {
-            Logger.error('Failed to start application:', error);
-            process.exit(1);
-        }
-    }
-
-    /**
-     * Test database connection
-     */
-    static async testDatabaseConnection() {
-        try {
-            // Test database connection
-            const [rows] = await database.execute('SELECT 1 as test');
-            Logger.info('Database connection successful');
-        } catch (error) {
-            Logger.error('Database connection failed:', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Setup graceful shutdown
-     */
-    static setupGracefulShutdown(server) {
-        const shutdown = (signal) => {
-            Logger.info(`Received ${signal}, shutting down gracefully`);
-            
-            server.close(() => {
-                Logger.info('HTTP server closed');
-                
-                // Close database connections
-                database.end(() => {
-                    Logger.info('Database connections closed');
+                try {
+                    await database.disconnect();
+                    logger.info('Database connection closed');
                     process.exit(0);
-                });
+                } catch (error) {
+                    logger.error('Error during database shutdown:', error);
+                    process.exit(1);
+                }
             });
 
             // Force close after 30 seconds
             setTimeout(() => {
-                Logger.error('Could not close connections in time, forcefully shutting down');
+                logger.error('Could not close connections in time, forcefully shutting down');
                 process.exit(1);
             }, 30000);
         };
 
-        process.on('SIGTERM', () => shutdown('SIGTERM'));
-        process.on('SIGINT', () => shutdown('SIGINT'));
+        // Handle shutdown signals
+        process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+        process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+        return server;
+
+    } catch (error) {
+        logger.error('Failed to start server:', error);
+        process.exit(1);
     }
 }
 
-// Export the factory
-export default ApplicationFactory;
-
-// Start the application if this file is run directly
+// Start the server if this file is run directly
 if (import.meta.url === `file://${process.argv[1]}`) {
-    ApplicationFactory.start();
+    startServer().catch(error => {
+        logger.error('Unhandled error during server startup:', error);
+        process.exit(1);
+    });
 }
+
+// Export functions
+export { startServer, ApplicationFactory };
