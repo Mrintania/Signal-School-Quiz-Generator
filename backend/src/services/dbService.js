@@ -1,6 +1,6 @@
 // backend/src/services/dbService.js
 import { pool, getConnection } from '../config/db.js';
-import logger from '../utils/common/Logger.js'; // ใช้ default import แทน
+import logger from '../utils/logger.js'; // ใช้ default import แทน
 import configService from './configService.js';
 
 /**
