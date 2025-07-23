@@ -1,88 +1,100 @@
-// backend/src/errors/CustomErrors.js
+// src/errors/CustomErrors.js
+
 /**
- * Custom Error Classes
- * สร้าง error classes ที่เฉพาะเจาะจงเพื่อจัดการ error ได้ดีขึ้น
+ * Base Error Class สำหรับแอปพลิเคชัน
  */
-
-export class BaseError extends Error {
-    constructor(message, statusCode = 500, code = null) {
+export class AppError extends Error {
+    constructor(message, statusCode = 500, isOperational = true) {
         super(message);
-        this.name = this.constructor.name;
         this.statusCode = statusCode;
-        this.code = code;
-        this.timestamp = new Date().toISOString();
-
+        this.isOperational = isOperational;
+        this.status = `${statusCode}`.startsWith('4') ? 'fail' : 'error';
+        
         // Capture stack trace
-        if (Error.captureStackTrace) {
-            Error.captureStackTrace(this, this.constructor);
-        }
-    }
-
-    toJSON() {
-        return {
-            name: this.name,
-            message: this.message,
-            statusCode: this.statusCode,
-            code: this.code,
-            timestamp: this.timestamp
-        };
+        Error.captureStackTrace(this, this.constructor);
     }
 }
 
-export class ValidationError extends BaseError {
-    constructor(message, field = null) {
-        super(message, 400, 'VALIDATION_ERROR');
-        this.field = field;
+/**
+ * Validation Error Class
+ */
+export class ValidationError extends AppError {
+    constructor(message = 'Validation Error', errors = []) {
+        super(message, 400);
+        this.errors = errors;
+        this.type = 'VALIDATION_ERROR';
     }
 }
 
-export class NotFoundError extends BaseError {
-    constructor(resource = 'Resource') {
-        super(`${resource} not found`, 404, 'NOT_FOUND');
-        this.resource = resource;
-    }
-}
-
-export class UnauthorizedError extends BaseError {
-    constructor(message = 'Unauthorized access') {
-        super(message, 403, 'UNAUTHORIZED');
-    }
-}
-
-export class AuthenticationError extends BaseError {
+/**
+ * Authentication Error Class
+ */
+export class AuthenticationError extends AppError {
     constructor(message = 'Authentication failed') {
-        super(message, 401, 'AUTHENTICATION_FAILED');
+        super(message, 401);
+        this.type = 'AUTHENTICATION_ERROR';
     }
 }
 
-export class ConflictError extends BaseError {
-    constructor(message = 'Resource conflict') {
-        super(message, 409, 'CONFLICT');
+/**
+ * Authorization Error Class
+ */
+export class AuthorizationError extends AppError {
+    constructor(message = 'Access forbidden') {
+        super(message, 403);
+        this.type = 'AUTHORIZATION_ERROR';
     }
 }
 
-export class RateLimitError extends BaseError {
-    constructor(message = 'Rate limit exceeded') {
-        super(message, 429, 'RATE_LIMIT_EXCEEDED');
+/**
+ * Not Found Error Class
+ */
+export class NotFoundError extends AppError {
+    constructor(message = 'Resource not found') {
+        super(message, 404);
+        this.type = 'NOT_FOUND_ERROR';
     }
 }
 
-export class AIServiceError extends BaseError {
-    constructor(message = 'AI service error', originalError = null) {
-        super(message, 503, 'AI_SERVICE_ERROR');
-        this.originalError = originalError;
+/**
+ * External API Error Class
+ */
+export class ExternalAPIError extends AppError {
+    constructor(message = 'External API Error', service = 'Unknown') {
+        super(message, 502);
+        this.service = service;
+        this.type = 'EXTERNAL_API_ERROR';
     }
 }
 
-export class DatabaseError extends BaseError {
-    constructor(message = 'Database operation failed', originalError = null) {
-        super(message, 500, 'DATABASE_ERROR');
-        this.originalError = originalError;
+/**
+ * Database Error Class
+ */
+export class DatabaseError extends AppError {
+    constructor(message = 'Database Error') {
+        super(message, 500);
+        this.type = 'DATABASE_ERROR';
     }
 }
 
-export class FileError extends BaseError {
-    constructor(message = 'File operation failed') {
-        super(message, 400, 'FILE_ERROR');
+/**
+ * Rate Limit Error Class
+ */
+export class RateLimitError extends AppError {
+    constructor(message = 'Too many requests') {
+        super(message, 429);
+        this.type = 'RATE_LIMIT_ERROR';
     }
 }
+
+// Export เป็น default object เพื่อความสะดวก
+export default {
+    AppError,
+    ValidationError,
+    AuthenticationError,
+    AuthorizationError,
+    NotFoundError,
+    ExternalAPIError,
+    DatabaseError,
+    RateLimitError
+};

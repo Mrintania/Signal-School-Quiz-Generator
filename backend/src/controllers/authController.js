@@ -1,369 +1,296 @@
-// backend/src/controllers/authController.js
-import { AuthService, AuthEmailService } from '../services/authService.js';
-import { logger } from '../utils/logger.js';
-import { validatePassword } from '../utils/validator.js';
+// src/controllers/authController.js
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import { v4 as uuidv4 } from 'uuid';
+import { getDatabase } from '../database/database.js';
+import {
+    AuthenticationError,
+    ValidationError,
+    NotFoundError
+} from '../errors/CustomErrors.js';
+
+// สร้าง JWT Token
+const generateToken = (userId, email) => {
+    return jwt.sign(
+        { userId, email },
+        process.env.JWT_SECRET || 'signal-school-secret-key-2024',
+        { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+    );
+};
+
+// สร้าง Session Token
+const generateSessionToken = () => {
+    return uuidv4();
+};
 
 /**
- * Controller for handling authentication-related routes
+ * เข้าสู่ระบบ
  */
-class AuthController {
-    /**
-     * Register a new user
-     */
-    static async register(req, res) {
-        try {
-            const { firstName, lastName, email, password, schoolName } = req.body;
+export const login = async (req, res, next) => {
+    try {
+        const { email, password } = req.body;
 
-            // Validate required fields
-            if (!firstName || !lastName || !email || !password) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Please provide all required information'
-                });
-            }
-
-            // Validate password strength
-            const passwordValidation = validatePassword(password);
-            if (!passwordValidation.isValid) {
-                return res.status(400).json({
-                    success: false,
-                    message: passwordValidation.message
-                });
-            }
-
-            // Check if email already exists
-            const existingUser = await AuthService.getUserByEmail(email);
-            if (existingUser) {
-                return res.status(409).json({
-                    success: false,
-                    message: 'This email is already registered'
-                });
-            }
-
-            // Hash password
-            const passwordHash = await AuthService.hashPassword(password);
-
-            // Create user
-            const userId = await AuthService.createUser(
-                { firstName, lastName, email, schoolName, status: 'pending', role: 'teacher' },
-                passwordHash
-            );
-
-            // Notify admin about new user registration
-            await AuthEmailService.notifyAdminsAboutNewUser(userId, email, firstName, lastName);
-
-            // Log user registration
-            logger.info(`New user registered (awaiting admin verification): ${email} (ID: ${userId})`);
-
-            return res.status(201).json({
-                success: true,
-                message: 'Registration successful! Your account is pending administrator approval. You will be notified once your account is verified.'
-            });
-        } catch (error) {
-            logger.error('Registration error:', error);
-
-            return res.status(500).json({
-                success: false,
-                message: 'An error occurred during registration',
-                error: process.env.NODE_ENV === 'development' ? error.message : undefined
-            });
+        // ตรวจสอบข้อมูลที่ส่งมา
+        if (!email || !password) {
+            throw new ValidationError('กรุณากรอกอีเมลและรหัสผ่าน', [
+                { field: 'email', message: 'อีเมลเป็นข้อมูลที่จำเป็น' },
+                { field: 'password', message: 'รหัสผ่านเป็นข้อมูลที่จำเป็น' }
+            ]);
         }
-    }
 
-    /**
-     * User login
-     */
-    static async login(req, res) {
-        try {
-            const { email, password } = req.body;
-            const ipAddress = req.ip || req.connection.remoteAddress;
+        const db = getDatabase();
 
-            // Check for too many login attempts from this IP
-            const failedAttempts = await AuthService.getFailedLoginAttempts(ipAddress);
-            if (failedAttempts >= 5) {
-                return res.status(429).json({
-                    success: false,
-                    message: 'Too many failed login attempts. Please try again later.'
-                });
-            }
+        // ค้นหาผู้ใช้จากฐานข้อมูล
+        const user = await db.get(`
+            SELECT id, email, password, firstName, lastName, role, department, rank, isActive
+            FROM users 
+            WHERE email = ? AND isActive = 1
+        `, [email]);
 
-            // Record login attempt (default to failed)
-            await AuthService.recordLoginAttempt(email, ipAddress, false);
+        if (!user) {
+            throw new AuthenticationError('อีเมลหรือรหัสผ่านไม่ถูกต้อง');
+        }
 
-            // Find user by email
-            const user = await AuthService.getUserByEmail(email);
-            if (!user) {
-                return res.status(401).json({
-                    success: false,
-                    message: 'Invalid email or password'
-                });
-            }
+        // ตรวจสอบรหัสผ่าน
+        const isPasswordValid = await bcrypt.compare(password, user.password);
+        if (!isPasswordValid) {
+            throw new AuthenticationError('อีเมลหรือรหัสผ่านไม่ถูกต้อง');
+        }
 
-            // Check account status
-            if (user.status === 'pending') {
-                return res.status(401).json({
-                    success: false,
-                    message: 'Your account is pending administrator approval. You will be notified once your account is verified.',
-                    requiresAdminVerification: true
-                });
-            } else if (user.status !== 'active') {
-                return res.status(401).json({
-                    success: false,
-                    message: 'Your account is not active. Please contact an administrator.'
-                });
-            }
+        // สร้าง JWT Token
+        const token = generateToken(user.id, user.email);
 
-            // Verify password
-            const passwordMatch = await AuthService.verifyPassword(password, user.password_hash);
-            if (!passwordMatch) {
-                return res.status(401).json({
-                    success: false,
-                    message: 'Invalid email or password'
-                });
-            }
+        // สร้าง Session Token
+        const sessionToken = generateSessionToken();
+        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 วัน
 
-            // Update login attempt to successful
-            await AuthService.recordLoginAttempt(email, ipAddress, true);
+        // บันทึก session ลงฐานข้อมูล
+        await db.run(`
+            INSERT INTO user_sessions (user_id, token, expires_at)
+            VALUES (?, ?, ?)
+        `, [user.id, sessionToken, expiresAt]);
 
-            // Update last login timestamp
-            await AuthService.updateLastLogin(user.id);
+        // อัพเดทเวลาเข้าสู่ระบบล่าสุด
+        await db.run(`
+            UPDATE users 
+            SET lastLogin = CURRENT_TIMESTAMP, updatedAt = CURRENT_TIMESTAMP
+            WHERE id = ?
+        `, [user.id]);
 
-            // Create JWT token
-            const token = AuthService.createToken(user);
+        // ส่งข้อมูลกลับ (ไม่รวมรหัสผ่าน)
+        const { password: _, ...userWithoutPassword } = user;
 
-            // Get user's schools and settings
-            const schools = await AuthService.getUserSchools(user.id);
-            const userSettings = await AuthService.getUserSettings(user.id);
-
-            // Log the successful login
-            logger.info(`User logged in: ${email} (ID: ${user.id})`);
-
-            // Record login activity
-            await AuthService.recordActivity(
-                user.id,
-                'login',
-                'User logged in',
-                ipAddress,
-                req.headers['user-agent']
-            );
-
-            return res.status(200).json({
-                success: true,
-                message: 'Login successful',
-                token,
+        res.status(200).json({
+            success: true,
+            message: 'เข้าสู่ระบบสำเร็จ',
+            data: {
                 user: {
-                    id: user.id,
-                    firstName: user.first_name,
-                    lastName: user.last_name,
-                    email: user.email,
-                    role: user.role,
-                    schools: schools,
-                    settings: userSettings
+                    ...userWithoutPassword,
+                    fullName: `${user.firstName} ${user.lastName}`
+                },
+                token,
+                sessionToken,
+                expiresAt
+            }
+        });
+
+        console.log(`✅ User logged in: ${user.email}`);
+
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * ออกจากระบบ
+ */
+export const logout = async (req, res, next) => {
+    try {
+        const token = req.headers.authorization?.replace('Bearer ', '');
+
+        if (token) {
+            const db = getDatabase();
+            // ลบ session จากฐานข้อมูล
+            await db.run('DELETE FROM user_sessions WHERE token = ?', [token]);
+        }
+
+        res.status(200).json({
+            success: true,
+            message: 'ออกจากระบบสำเร็จ'
+        });
+
+        console.log('✅ User logged out');
+
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * ตรวจสอบสถานะการเข้าสู่ระบบ
+ */
+export const checkAuth = async (req, res, next) => {
+    try {
+        const authHeader = req.headers.authorization;
+
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            throw new AuthenticationError('ไม่พบ token การยืนยันตัวตน');
+        }
+
+        const token = authHeader.replace('Bearer ', '');
+
+        // ตรวจสอบ JWT Token
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'signal-school-secret-key-2024');
+
+        const db = getDatabase();
+
+        // ตรวจสอบผู้ใช้ในฐานข้อมูล
+        const user = await db.get(`
+            SELECT id, email, firstName, lastName, role, department, rank, isActive
+            FROM users 
+            WHERE id = ? AND isActive = 1
+        `, [decoded.userId]);
+
+        if (!user) {
+            throw new AuthenticationError('ไม่พบข้อมูลผู้ใช้');
+        }
+
+        // ตรวจสอบ session
+        const session = await db.get(`
+            SELECT expires_at FROM user_sessions 
+            WHERE user_id = ? AND expires_at > CURRENT_TIMESTAMP
+        `, [user.id]);
+
+        if (!session) {
+            throw new AuthenticationError('Session หมดอายุ กรุณาเข้าสู่ระบบใหม่');
+        }
+
+        res.status(200).json({
+            success: true,
+            message: 'ยืนยันตัวตนสำเร็จ',
+            data: {
+                user: {
+                    ...user,
+                    fullName: `${user.firstName} ${user.lastName}`
                 }
-            });
-        } catch (error) {
-            logger.error('Login error:', error);
+            }
+        });
 
-            return res.status(500).json({
-                success: false,
-                message: 'An error occurred during login',
-                error: process.env.NODE_ENV === 'development' ? error.message : undefined
-            });
+    } catch (error) {
+        if (error.name === 'JsonWebTokenError') {
+            next(new AuthenticationError('Token ไม่ถูกต้อง'));
+        } else if (error.name === 'TokenExpiredError') {
+            next(new AuthenticationError('Token หมดอายุ'));
+        } else {
+            next(error);
         }
     }
+};
 
-    /**
-     * Forgot password
-     */
-    static async forgotPassword(req, res) {
-        try {
-            const { email } = req.body;
+/**
+ * รีเฟรช Token
+ */
+export const refreshToken = async (req, res, next) => {
+    try {
+        const { refreshToken } = req.body;
 
-            if (!email) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Email is required'
-                });
-            }
-
-            // Find user by email
-            const user = await AuthService.getUserByEmail(email);
-
-            // Don't reveal if email exists or not for security
-            if (!user || user.status !== 'active') {
-                return res.status(200).json({
-                    success: true,
-                    message: 'If your email exists in our system, a password reset link will be sent.'
-                });
-            }
-
-            // Generate password reset token
-            const resetToken = AuthService.generateToken();
-
-            // Set reset token
-            await AuthService.setPasswordResetToken(user.id, resetToken);
-
-            // Send reset email
-            await AuthEmailService.sendPasswordResetEmail(email, user.first_name, resetToken);
-
-            logger.info(`Password reset requested for: ${email} (ID: ${user.id})`);
-
-            return res.status(200).json({
-                success: true,
-                message: 'If your email exists in our system, a password reset link will be sent.'
-            });
-        } catch (error) {
-            logger.error('Forgot password error:', error);
-
-            return res.status(500).json({
-                success: false,
-                message: 'An error occurred processing your request',
-                error: process.env.NODE_ENV === 'development' ? error.message : undefined
-            });
+        if (!refreshToken) {
+            throw new ValidationError('ไม่พบ refresh token');
         }
-    }
 
-    /**
-     * Reset password with token
-     */
-    static async resetPassword(req, res) {
-        try {
-            const { token, newPassword } = req.body;
+        const db = getDatabase();
 
-            if (!token || !newPassword) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Token and new password are required'
-                });
-            }
+        // ตรวจสอบ refresh token
+        const session = await db.get(`
+            SELECT us.user_id, u.email, u.firstName, u.lastName, u.role, u.department, u.rank
+            FROM user_sessions us
+            JOIN users u ON us.user_id = u.id
+            WHERE us.token = ? AND us.expires_at > CURRENT_TIMESTAMP AND u.isActive = 1
+        `, [refreshToken]);
 
-            // Validate password strength
-            const passwordValidation = validatePassword(newPassword);
-            if (!passwordValidation.isValid) {
-                return res.status(400).json({
-                    success: false,
-                    message: passwordValidation.message
-                });
-            }
-
-            // Find user with this token
-            const user = await AuthService.getUserByResetToken(token);
-
-            if (!user) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Invalid or expired reset token'
-                });
-            }
-
-            // Check if token has expired
-            const tokenExpiry = new Date(user.reset_token_expires_at);
-            if (tokenExpiry < new Date()) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Reset token has expired. Please request a new one.'
-                });
-            }
-
-            // Hash new password
-            const passwordHash = await AuthService.hashPassword(newPassword);
-
-            // Update user password and clear reset token
-            await AuthService.updatePassword(user.id, passwordHash);
-
-            // Log password reset
-            logger.info(`Password reset completed for: ${user.email} (ID: ${user.id})`);
-
-            // Record password reset activity
-            await AuthService.recordActivity(
-                user.id,
-                'password_reset',
-                'User reset password'
-            );
-
-            return res.status(200).json({
-                success: true,
-                message: 'Your password has been successfully reset. You can now log in with your new password.'
-            });
-        } catch (error) {
-            logger.error('Reset password error:', error);
-
-            return res.status(500).json({
-                success: false,
-                message: 'An error occurred while resetting your password',
-                error: process.env.NODE_ENV === 'development' ? error.message : undefined
-            });
+        if (!session) {
+            throw new AuthenticationError('Refresh token ไม่ถูกต้องหรือหมดอายุ');
         }
+
+        // สร้าง token ใหม่
+        const newToken = generateToken(session.user_id, session.email);
+        const newSessionToken = generateSessionToken();
+        const newExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+        // อัพเดท session
+        await db.run(`
+            UPDATE user_sessions 
+            SET token = ?, expires_at = ?
+            WHERE user_id = ? AND token = ?
+        `, [newSessionToken, newExpiresAt, session.user_id, refreshToken]);
+
+        res.status(200).json({
+            success: true,
+            message: 'รีเฟรช token สำเร็จ',
+            data: {
+                token: newToken,
+                sessionToken: newSessionToken,
+                expiresAt: newExpiresAt
+            }
+        });
+
+    } catch (error) {
+        next(error);
     }
+};
 
-    /**
-     * Verify user by admin
-     */
-    static async verifyUser(req, res) {
-        try {
-            const adminId = req.user.userId;
-            const { userId } = req.params;
+/**
+ * เปลี่ยนรหัสผ่าน
+ */
+export const changePassword = async (req, res, next) => {
+    try {
+        const { currentPassword, newPassword } = req.body;
+        const userId = req.user.id; // จาก auth middleware
 
-            // Get admin role
-            const admin = await AuthService.getUserById(adminId);
-
-            if (!admin || (admin.role !== 'admin' && admin.role !== 'school_admin')) {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Only administrators can verify user accounts'
-                });
-            }
-
-            // Find user to verify
-            const user = await AuthService.getUserById(userId);
-
-            if (!user) {
-                return res.status(404).json({
-                    success: false,
-                    message: 'User not found'
-                });
-            }
-
-            // Check if user is already verified
-            if (user.status === 'active') {
-                return res.status(400).json({
-                    success: false,
-                    message: 'This user account is already active'
-                });
-            }
-
-            // Update user status to active
-            await AuthService.updateUserStatus(userId, 'active', true);
-
-            // Log the verification
-            logger.info(`User verified by admin: ${user.email} (ID: ${userId}) - Verified by admin ID: ${adminId}`);
-
-            // Record verification activity
-            await AuthService.recordActivity(
-                userId,
-                'account_verified',
-                `Account verified by administrator (ID: ${adminId})`
-            );
-
-            // Notify user about verification
-            await AuthEmailService.sendAccountVerificationEmail(user.email, user.first_name);
-
-            return res.status(200).json({
-                success: true,
-                message: `User account for ${user.email} has been successfully verified`
-            });
-        } catch (error) {
-            logger.error('User verification error:', error);
-
-            return res.status(500).json({
-                success: false,
-                message: 'An error occurred while verifying the user account',
-                error: process.env.NODE_ENV === 'development' ? error.message : undefined
-            });
+        if (!currentPassword || !newPassword) {
+            throw new ValidationError('กรุณากรอกรหัสผ่านเดิมและรหัสผ่านใหม่');
         }
+
+        if (newPassword.length < 8) {
+            throw new ValidationError('รหัสผ่านใหม่ต้องมีความยาวอย่างน้อย 8 ตัวอักษร');
+        }
+
+        const db = getDatabase();
+
+        // ตรวจสอบรหัสผ่านเดิม
+        const user = await db.get('SELECT password FROM users WHERE id = ?', [userId]);
+        const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password);
+
+        if (!isCurrentPasswordValid) {
+            throw new AuthenticationError('รหัสผ่านเดิมไม่ถูกต้อง');
+        }
+
+        // เข้ารหัสรหัสผ่านใหม่
+        const hashedNewPassword = await bcrypt.hash(newPassword, 12);
+
+        // อัพเดทรหัสผ่าน
+        await db.run(`
+            UPDATE users 
+            SET password = ?, updatedAt = CURRENT_TIMESTAMP
+            WHERE id = ?
+        `, [hashedNewPassword, userId]);
+
+        res.status(200).json({
+            success: true,
+            message: 'เปลี่ยนรหัสผ่านสำเร็จ'
+        });
+
+        console.log(`✅ Password changed for user ID: ${userId}`);
+
+    } catch (error) {
+        next(error);
     }
+};
 
-    // Other controller methods would follow the same pattern...
-}
-
-export default AuthController;
+export default {
+    login,
+    logout,
+    checkAuth,
+    refreshToken,
+    changePassword
+};
