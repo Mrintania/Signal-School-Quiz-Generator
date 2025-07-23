@@ -12,7 +12,7 @@ import { QuizManagementController } from '../../controllers/quiz/QuizManagementC
 import { authenticateToken } from '../../middlewares/auth.js';
 import { rateLimiter, aiGenerationLimiter } from '../../middlewares/rateLimiter.js';
 import { quizValidationRules } from '../../middlewares/validation/QuizValidation.js';
-import errorHandlingMiddleware from '../../middlewares/error/ErrorHandlingMiddleware.js'; // ใช้ default import
+import * as errorHandlingMiddleware from '../../middlewares/error/ErrorHandlingMiddleware.js'; // Use named imports for clarity
 import { CacheMiddleware } from '../../middlewares/cache/CacheMiddleware.js';
 
 // Import services for dependency injection
