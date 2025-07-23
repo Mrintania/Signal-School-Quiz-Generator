@@ -138,7 +138,6 @@ const seedInitialData = async () => {
 
         if (!existingUser) {
             // สร้างผู้ใช้เริ่มต้น
-            const bcrypt = await import('bcryptjs');
             const hashedPassword = await bcrypt.hash('password1234', 12);
 
             await db.run(`
