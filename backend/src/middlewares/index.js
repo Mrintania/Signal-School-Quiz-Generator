@@ -1,26 +1,31 @@
+// backend/src/middlewares/index.js
 /**
- * Middlewares Index File
- * รวม exports ของ middlewares ทั้งหมด
+ * Middleware Index File
+ * รวม exports ของ middleware ทั้งหมด
  */
 
-// Validation Middleware
-export * from './validation/QuizValidation.js';
-export { default as FileValidation } from './validation/FileValidation.js';
-export { default as ValidationHandler } from './validation/ValidationHandler.js';
+// Error handling
+export { default as errorHandlingMiddleware } from './error/ErrorHandlingMiddleware.js';
 
-// Cache Middleware
+// Authentication & Authorization
+export { authenticateToken, authorizeRoles } from './auth.js';
+
+// Rate limiting
+export { rateLimiter, aiGenerationLimiter, authLimiter } from './rateLimiter.js';
+
+// Validation
+export { quizValidationRules } from './validation/QuizValidation.js';
+export { userValidationRules } from './validation/UserValidation.js';
+export { authValidationRules } from './validation/AuthValidation.js';
+
+// File upload
+export { fileUploadMiddleware } from './fileUpload.js';
+
+// Cache
 export { CacheMiddleware } from './cache/CacheMiddleware.js';
-export { default as CacheInvalidation } from './cache/CacheInvalidation.js';
 
-// Security Middleware
-export { default as RateLimitingMiddleware } from './security/RateLimitingMiddleware.js';
-export { default as AuthorizationMiddleware } from './security/AuthorizationMiddleware.js';
+// Logging
+export { requestLogger } from './requestLogger.js';
 
-// Error Middleware
-export { ErrorHandlingMiddleware } from './error/ErrorHandlingMiddleware.js';
-
-// Auth Middleware
-export { authenticateToken, authorizeRole } from './auth.js';
-
-// Rate Limiter
-export { rateLimiter, aiGenerationLimiter } from './rateLimiter.js';
+// Security
+export { securityHeaders } from './security.js';

@@ -1,0 +1,55 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run security scan every Monday at 2 AM UTC
+    - cron: '0 2 * * 1'
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        directory: [frontend, backend]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18.20.4'
+        cache: 'npm'
+        cache-dependency-path: ${{ matrix.directory }}/package-lock.json
+        
+    - name: Install dependencies
+      working-directory: ${{ matrix.directory }}
+      run: |
+        npm ci --audit-level=moderate
+        
+    - name: Run security audit
+      working-directory: ${{ matrix.directory }}
+      run: |
+        npm audit --audit-level=moderate
+        
+    - name: Check for known vulnerabilities
+      working-directory: ${{ matrix.directory }}
+      run: |
+        npx audit-ci --moderate
+        
+    - name: Generate security report
+      working-directory: ${{ matrix.directory }}
+      run: |
+        npm audit --json > security-report-${{ matrix.directory }}.json
+        
+    - name: Upload security report
+      uses: actions/upload-artifact@v4
+      with:
+        name: security-report-${{ matrix.directory }}
+        path: ${{ matrix.directory }}/security-report-${{ matrix.directory }}.json

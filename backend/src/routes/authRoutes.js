@@ -1,118 +1,138 @@
-// backend/src/routes/authRoutes.js
+// src/routes/authRoutes.js
 import express from 'express';
-import AuthController from '../controllers/authController.js';
-import { authLimiter } from '../middlewares/rateLimiter.js';
-import { authenticateToken, authorizeRoles } from '../middlewares/auth.js';
-import { validate, commonRules } from '../utils/validator.js';
-
-// Log available methods for debugging
-console.log('Available methods in AuthController:', Object.keys(AuthController));
+import { body, validationResult } from 'express-validator';
+import {
+    login,
+    logout,
+    checkAuth,
+    refreshToken,
+    changePassword
+} from '../controllers/authController.js';
+import { ValidationError } from '../errors/CustomErrors.js';
 
 const router = express.Router();
 
-// Apply rate limiter for auth routes to prevent brute force attempts
-router.use(authLimiter);
+// Validation middleware
+const handleValidationErrors = (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        const validationErrors = errors.array().map(error => ({
+            field: error.path,
+            message: error.msg,
+            value: error.value
+        }));
 
-// Create a helper function to safely use controller methods
-function safeController(method, fallback) {
-    return (req, res, next) => {
-        if (typeof AuthController[method] === 'function') {
-            return AuthController[method](req, res, next);
-        } else {
-            console.warn(`Warning: AuthController.${method} is not defined, using fallback`);
-            return fallback(req, res);
-        }
-    };
-}
-
-// Fallback handler
-const notImplemented = (req, res) => {
-    return res.status(200).json({
-        success: true,
-        message: 'This feature is not implemented yet'
-    });
+        throw new ValidationError('ข้อมูลที่ส่งมาไม่ถูกต้อง', validationErrors);
+    }
+    next();
 };
 
-// Basic routes
-router.post('/register', safeController('register', notImplemented));
-router.post('/login', safeController('login', notImplemented));
+// Authentication middleware
+const authenticateToken = async (req, res, next) => {
+    try {
+        const authHeader = req.headers.authorization;
 
-// Additional routes with safe controller usage
-router.post(
-    '/forgot-password',
-    commonRules.authRules.forgotPassword,
-    validate,
-    safeController('forgotPassword', notImplemented)
-);
-
-router.post(
-    '/reset-password',
-    commonRules.authRules.resetPassword,
-    validate,
-    safeController('resetPassword', notImplemented)
-);
-
-router.post(
-    '/verify-email',
-    commonRules.authRules.verifyEmail,
-    validate,
-    safeController('verifyEmail', notImplemented)
-);
-
-router.post(
-    '/resend-verification',
-    commonRules.authRules.resendVerification,
-    validate,
-    safeController('resendVerification', notImplemented)
-);
-
-router.post(
-    '/accept-invitation',
-    commonRules.authRules.acceptInvitation,
-    validate,
-    safeController('acceptInvitation', notImplemented)
-);
-
-router.post(
-    '/google',
-    commonRules.authRules.googleAuth,
-    validate,
-    safeController('googleAuth', notImplemented)
-);
-
-// Admin routes
-router.post(
-    '/verify-user/:userId',
-    authenticateToken,
-    authorizeRoles('admin', 'school_admin'),
-    safeController('verifyUser', notImplemented)
-);
-
-router.get(
-    '/pending-users',
-    authenticateToken,
-    authorizeRoles('admin', 'school_admin'),
-    safeController('getPendingUsers', notImplemented)
-);
-
-// Check authentication status
-router.get('/status', authenticateToken, (req, res) => {
-    return res.status(200).json({
-        success: true,
-        message: 'Authenticated',
-        user: {
-            id: req.user.userId,
-            email: req.user.email,
-            role: req.user.role
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            throw new AuthenticationError('ไม่พบ token การยืนยันตัวตน');
         }
-    });
-});
 
-// Test route
+        const token = authHeader.replace('Bearer ', '');
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'signal-school-secret-key-2024');
+
+        const db = getDatabase();
+        const user = await db.get(`
+            SELECT id, email, firstName, lastName, role, department, rank
+            FROM users 
+            WHERE id = ? AND isActive = 1
+        `, [decoded.userId]);
+
+        if (!user) {
+            throw new AuthenticationError('ไม่พบข้อมูลผู้ใช้');
+        }
+
+        req.user = user;
+        next();
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * @route   POST /api/auth/login
+ * @desc    เข้าสู่ระบบ
+ * @access  Public
+ */
+router.post('/login', [
+    body('email')
+        .isEmail()
+        .withMessage('รูปแบบอีเมลไม่ถูกต้อง')
+        .normalizeEmail(),
+    body('password')
+        .isLength({ min: 6 })
+        .withMessage('รหัสผ่านต้องมีความยาวอย่างน้อย 6 ตัวอักษร')
+], handleValidationErrors, login);
+
+/**
+ * @route   POST /api/auth/logout
+ * @desc    ออกจากระบบ
+ * @access  Private
+ */
+router.post('/logout', logout);
+
+/**
+ * @route   GET /api/auth/me
+ * @desc    ตรวจสอบสถานะการเข้าสู่ระบบ
+ * @access  Private
+ */
+router.get('/me', checkAuth);
+
+/**
+ * @route   POST /api/auth/refresh
+ * @desc    รีเฟรช Token
+ * @access  Public
+ */
+router.post('/refresh', [
+    body('refreshToken')
+        .notEmpty()
+        .withMessage('Refresh token เป็นข้อมูลที่จำเป็น')
+], handleValidationErrors, refreshToken);
+
+/**
+ * @route   PUT /api/auth/change-password
+ * @desc    เปลี่ยนรหัสผ่าน
+ * @access  Private
+ */
+router.put('/change-password', authenticateToken, [
+    body('currentPassword')
+        .notEmpty()
+        .withMessage('รหัสผ่านเดิมเป็นข้อมูลที่จำเป็น'),
+    body('newPassword')
+        .isLength({ min: 8 })
+        .withMessage('รหัสผ่านใหม่ต้องมีความยาวอย่างน้อย 8 ตัวอักษร')
+        .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
+        .withMessage('รหัสผ่านใหม่ต้องประกอบด้วยตัวพิมพ์เล็ก ตัวพิมพ์ใหญ่ และตัวเลข')
+], handleValidationErrors, changePassword);
+
+/**
+ * @route   GET /api/auth/test
+ * @desc    ทดสอบ API
+ * @access  Public
+ */
 router.get('/test', (req, res) => {
     res.status(200).json({
         success: true,
-        message: 'Auth routes are working'
+        message: 'Authentication API is working!',
+        data: {
+            timestamp: new Date().toISOString(),
+            version: '2.0.0',
+            endpoints: {
+                login: 'POST /api/auth/login',
+                logout: 'POST /api/auth/logout',
+                me: 'GET /api/auth/me',
+                refresh: 'POST /api/auth/refresh',
+                changePassword: 'PUT /api/auth/change-password'
+            }
+        }
     });
 });
 

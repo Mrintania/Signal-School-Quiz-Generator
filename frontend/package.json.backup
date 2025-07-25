@@ -20,7 +20,7 @@
     "react-icons": "^5.5.0",
     "react-markdown": "^9.0.1",
     "react-router-dom": "^6.30.0",
-    "react-scripts": "5.0.1",
+    "react-scripts": "^5.0.1",
     "react-syntax-highlighter": "^15.5.0",
     "rimraf": "^6.0.1",
     "web-vitals": "^2.1.4",
@@ -28,16 +28,11 @@
     "workbox-webpack-plugin": "^7.3.0"
   },
   "scripts": {
-    "start": "GENERATE_SOURCEMAP=false react-scripts start",
-    "build": "GENERATE_SOURCEMAP=false react-scripts build",
+    "start": "react-scripts start",
+    "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
-    "analyze": "source-map-explorer 'build/static/js/*.js'",
-    "audit": "npm audit",
-    "audit:fix": "npm audit fix --force",
-    "security:check": "npm audit --audit-level moderate",
-    "update:deps": "npm update",
-    "clean": "rm -rf node_modules package-lock.json && npm install"
+    "analyze": "source-map-explorer 'build/static/js/*.js'"
   },
   "eslintConfig": {
     "extends": [
@@ -64,19 +59,5 @@
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^5.2.0",
     "source-map-explorer": "^2.5.3"
-  },
-  "overrides": {
-    "postcss": "^8.4.31",
-    "prismjs": "^1.30.0",
-    "got": "^11.8.5",
-    "form-data": "^3.0.4",
-    "webpack-dev-server": "4.15.1"
-  },
-  "resolutions": {
-    "postcss": "^8.4.31",
-    "prismjs": "^1.30.0",
-    "got": "^11.8.5",
-    "form-data": "^3.0.4",
-    "webpack-dev-server": "4.15.1"
   }
 }
