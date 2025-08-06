@@ -1,5 +1,6 @@
 // src/routes/authRoutes.js
 import express from 'express';
+import jwt from 'jsonwebtoken';
 import { body, validationResult } from 'express-validator';
 import {
     login,
@@ -8,7 +9,8 @@ import {
     refreshToken,
     changePassword
 } from '../controllers/authController.js';
-import { ValidationError } from '../errors/CustomErrors.js';
+import { ValidationError, AuthenticationError } from '../errors/CustomErrors.js';
+import { getDatabase } from '../db/database.js';
 
 const router = express.Router();
 
