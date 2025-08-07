@@ -1,40 +1,62 @@
 {
-  "name": "backend",
-  "module": "index.js",
-  "type": "module",
-  "devDependencies": {
-    "@types/bun": "^1.2.19",
-    "nodemon": "^3.1.10"
-  },
-  "peerDependencies": {
-    "typescript": "^5.9.2"
-  },
-  "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0",
-    "@google/generative-ai": "^0.24.1",
-    "bcrypt": "^5.1.1",
-    "cors": "^2.8.5",
-    "dotenv": "^16.6.1",
-    "express": "^4.21.2",
-    "express-rate-limit": "^7.5.1",
-    "express-validator": "^7.2.1",
-    "helmet": "^8.1.0",
-    "hpp": "^0.2.3",
-    "isomorphic-dompurify": "^2.26.0",
-    "jsonwebtoken": "^9.0.2",
-    "multer": "^2.0.2",
-    "mysql2": "^3.14.3",
-    "node-cache": "^5.1.2",
-    "nodemailer": "^7.0.5",
-    "openai": "^4.104.0",
-    "pdf-parse": "^1.1.1",
-    "pdf2pic": "^3.2.0",
-    "winston": "^3.17.0",
-    "xss-clean": "^0.1.4"
-  },
+  "name": "signal-school-quiz-generator",
+  "version": "2.0.0",
+  "description": "Quiz Generator Application for Signal School - Royal Thai Army",
+  "main": "index.js",
   "scripts": {
     "start": "bun run index.js",
     "dev": "bun --watch index.js",
-    "debug": "bun --inspect --watch index.js"
-  }
+    "test": "bun test",
+    "setup": "bun install",
+    "build": "echo 'Build completed'",
+    "db:migrate": "bun run src/database/migrations/createTables.js",
+    "db:seed": "bun run src/database/seeders/defaultData.js",
+    "logs:clear": "rm -rf logs/*.log",
+    "cleanup": "rm -rf uploads/temp/* && rm -rf logs/*.log"
+  },
+  "keywords": [
+    "quiz", 
+    "education", 
+    "signal-school", 
+    "army", 
+    "thai", 
+    "gemini", 
+    "ai"
+  ],
+  "author": "Signal School Development Team",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "helmet": "^7.1.0",
+    "dotenv": "^16.3.1",
+    "winston": "^3.11.0",
+    "express-rate-limit": "^7.1.5",
+    "jsonwebtoken": "^9.0.2",
+    "bcryptjs": "^2.4.3",
+    "joi": "^17.11.0",
+    "multer": "^1.4.5-lts.1",
+    "mysql2": "^3.6.5",
+    "@google/generative-ai": "^0.2.1",
+    "pdf-parse": "^1.1.1",
+    "mammoth": "^1.6.0",
+    "node-cache": "^5.1.2",
+    "nodemailer": "^6.9.7"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2",
+    "concurrently": "^8.2.2"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "bun": ">=1.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/signal-school/quiz-generator.git"
+  },
+  "bugs": {
+    "url": "https://github.com/signal-school/quiz-generator/issues"
+  },
+  "homepage": "https://github.com/signal-school/quiz-generator#readme"
 }

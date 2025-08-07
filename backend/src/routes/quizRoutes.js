@@ -1,219 +1,222 @@
-import express from 'express';
-import QuizController from '../controllers/quizController.js';
-import { authenticateToken } from '../middlewares/auth.js';
-import multer from 'multer';
-import path from 'path';
-import fs from 'fs';
-import { fileURLToPath } from 'url';
-import { sanitizeAll } from '../utils/sanitizer.js';
-import { generalLimiter } from '../middlewares/rateLimiter.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// backend/src/routes/quizRoutes.js
+const express = require('express');
 const router = express.Router();
+const quizController = require('../controllers/quizController');
+const { authenticateUser } = require('../middleware/auth');
+const { generalLimiter, aiGenerationLimiter } = require('../middleware/rateLimiter');
+const upload = require('../middleware/upload');
+const { validateQuiz, validateQuestion } = require('../middleware/validation');
 
-// Apply sanitization middleware to all routes
-router.use(sanitizeAll);
+/**
+ * Quiz Management Routes
+ * เส้นทางสำหรับการจัดการข้อสอบ
+ */
 
-// Apply general rate limiter to all quiz routes
-router.use(generalLimiter);
+// GET /api/quizzes - ดึงข้อสอบทั้งหมดของผู้ใช้
+router.get('/',
+    authenticateUser,
+    generalLimiter,
+    quizController.getAllQuizzes
+);
 
-// Add authenticateToken to secure routes
-router.use(authenticateToken);
+// GET /api/quizzes/:id - ดึงข้อสอบตาม ID
+router.get('/:id',
+    authenticateUser,
+    generalLimiter,
+    quizController.getQuizById
+);
 
-// Configure multer for file uploads
-const uploadDir = path.join(__dirname, '../../../uploads/documents');
-if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
-}
+// POST /api/quizzes - สร้างข้อสอบใหม่
+router.post('/',
+    authenticateUser,
+    generalLimiter,
+    validateQuiz,
+    quizController.createQuiz
+);
 
-const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        cb(null, uploadDir);
-    },
-    filename: function (req, file, cb) {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        const fileExtension = path.extname(file.originalname);
-        
-        // Ensure UTF-8 filename handling
-        const sanitizedOriginalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
-        const baseFileName = path.basename(sanitizedOriginalName, fileExtension);
-        
-        cb(null, `doc-${req.user.userId}-${uniqueSuffix}-${baseFileName}${fileExtension}`);
-    }
-});
+// PUT /api/quizzes/:id - แก้ไขข้อสอบ
+router.put('/:id',
+    authenticateUser,
+    generalLimiter,
+    validateQuiz,
+    quizController.updateQuiz
+);
 
-const fileFilter = (req, file, cb) => {
-    const allowedTypes = [
-        'application/pdf',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'text/plain'
-    ];
-    
-    // Handle UTF-8 filenames properly
-    const originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
-    file.originalname = originalName;
-    
-    if (allowedTypes.includes(file.mimetype)) {
-        cb(null, true);
-    } else {
-        cb(new Error('รองรับเฉพาะไฟล์ PDF, DOCX และ TXT เท่านั้น!'), false);
-    }
-};
+// DELETE /api/quizzes/:id - ลบข้อสอบ
+router.delete('/:id',
+    authenticateUser,
+    generalLimiter,
+    quizController.deleteQuiz
+);
 
-const upload = multer({
-    storage: storage,
-    limits: {
-        fileSize: 10 * 1024 * 1024, // 10 MB limit
-    },
-    fileFilter: fileFilter
-});
+/**
+ * AI Generation Routes
+ * เส้นทางสำหรับการสร้างข้อสอบด้วย AI
+ */
 
-// Apply UTF-8 middleware to all routes
-router.use((req, res, next) => {
-    res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    next();
-});
-
-router.use(authenticateToken);
-
-// API Route for generating a quiz - stricter rate limiting for AI calls
-router.post(
-    '/generate',
+// POST /api/quizzes/generate - สร้างข้อสอบด้วย AI จากข้อความ
+router.post('/generate',
+    authenticateUser,
     aiGenerationLimiter,
-    commonRules.quizRules.generate,
-    validate,
-    QuizController.generateQuiz
+    quizController.generateQuizWithAI
 );
 
-// API Route for generating quiz from file upload with UTF-8 support
-router.post(
-    '/generate-from-file',
+// POST /api/quizzes/generate-from-file - สร้างข้อสอบจากไฟล์เอกสาร
+router.post('/generate-from-file',
+    authenticateUser,
+    aiGenerationLimiter,
     upload.single('file'),
-    (req, res, next) => {
-        // Additional UTF-8 handling middleware
-        if (req.file && req.file.originalname) {
-            // Ensure proper UTF-8 encoding for filename
-            req.file.originalname = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
-        }
-        next();
-    },
-    QuizController.generateQuizFromFile
+    quizController.generateQuizFromFile
 );
 
-// API Route for saving a generated quiz
-router.post(
-    '/save',
-    commonRules.quizRules.create,
-    validate,
-    QuizController.saveQuiz
+// POST /api/quizzes/analyze-content - วิเคราะห์เนื้อหาก่อนสร้างข้อสอบ
+router.post('/analyze-content',
+    authenticateUser,
+    aiGenerationLimiter,
+    quizController.analyzeContent
 );
 
-// API Route for getting all quizzes
-router.get('/', QuizController.getAllQuizzes);
+/**
+ * Import/Export Routes
+ * เส้นทางสำหรับการนำเข้า/ส่งออกข้อสอบ
+ */
 
-// API Route for getting a quiz by ID
-router.get(
-    '/:id',
-    commonRules.quizRules.getById,
-    validate,
-    QuizController.getQuizById
+// POST /api/quizzes/import - นำเข้าข้อสอบจากไฟล์
+router.post('/import',
+    authenticateUser,
+    generalLimiter,
+    upload.single('file'),
+    quizController.importQuiz
 );
 
-// API Route for deleting a quiz
-router.delete(
-    '/:id',
-    commonRules.quizRules.delete,
-    validate,
-    QuizController.deleteQuiz
+// GET /api/quizzes/:id/export - ส่งออกข้อสอบเป็นไฟล์
+router.get('/:id/export',
+    authenticateUser,
+    generalLimiter,
+    quizController.exportQuiz
 );
 
-// API Route for renaming a quiz
-router.patch(
-    '/:id/rename',
-    commonRules.quizRules.rename,
-    validate,
-    QuizController.renameQuiz
+// GET /api/quizzes/:id/export/pdf - ส่งออกข้อสอบเป็น PDF
+router.get('/:id/export/pdf',
+    authenticateUser,
+    generalLimiter,
+    quizController.exportQuizToPDF
 );
 
-// API Route for exporting a quiz in GIFT format for Moodle
-router.get(
-    '/:id/export/moodle',
-    commonRules.quizRules.getById,
-    validate,
-    ExportController.exportQuizToGift
+/**
+ * Question Management Routes
+ * เส้นทางสำหรับการจัดการคำถาม
+ */
+
+// GET /api/quizzes/:id/questions - ดึงคำถามทั้งหมดในข้อสอบ
+router.get('/:id/questions',
+    authenticateUser,
+    generalLimiter,
+    quizController.getQuizQuestions
 );
 
-// API Route for exporting a quiz in plain text format
-router.get(
-    '/:id/export/text',
-    commonRules.quizRules.getById,
-    validate,
-    ExportController.exportQuizToPlainText
+// POST /api/quizzes/:id/questions - เพิ่มคำถามใหม่
+router.post('/:id/questions',
+    authenticateUser,
+    generalLimiter,
+    validateQuestion,
+    quizController.addQuestion
 );
 
-// API Route for updating quiz questions
-router.patch(
-    '/:id/questions',
-    commonRules.quizRules.updateQuestions,
-    validate,
-    QuizController.updateQuizQuestions
+// PUT /api/quizzes/:id/questions/:questionId - แก้ไขคำถาม
+router.put('/:id/questions/:questionId',
+    authenticateUser,
+    generalLimiter,
+    validateQuestion,
+    quizController.updateQuestion
 );
 
-// API Route for moving a quiz to a folder
-router.patch(
-    '/:id/move',
-    commonRules.quizRules.move,
-    validate,
-    QuizController.moveQuiz
+// DELETE /api/quizzes/:id/questions/:questionId - ลบคำถาม
+router.delete('/:id/questions/:questionId',
+    authenticateUser,
+    generalLimiter,
+    quizController.deleteQuestion
 );
 
-// API Route for checking title availability
-router.get('/check-title', QuizController.checkTitleAvailability);
+// POST /api/quizzes/:id/questions/bulk - เพิ่มคำถามหลายข้อพร้อมกัน
+router.post('/:id/questions/bulk',
+    authenticateUser,
+    generalLimiter,
+    quizController.addBulkQuestions
+);
 
-router.get('/test-db', async (req, res) => {
-    try {
-        // Test database connection
-        const [rows] = await pool.execute('SELECT 1 as test');
+/**
+ * Quiz Templates Routes
+ * เส้นทางสำหรับการจัดการเทมเพลตข้อสอบ
+ */
 
-        // Check if quizzes table exists
-        const [tables] = await pool.execute(`
-        SHOW TABLES LIKE 'quizzes'
-      `);
+// GET /api/quizzes/templates - ดึงเทมเพลตข้อสอบ
+router.get('/templates/list',
+    authenticateUser,
+    generalLimiter,
+    quizController.getQuizTemplates
+);
 
-        const quizzesTableExists = tables.length > 0;
+// POST /api/quizzes/templates - สร้างเทมเพลตใหม่
+router.post('/templates/create',
+    authenticateUser,
+    generalLimiter,
+    quizController.createQuizTemplate
+);
 
-        if (quizzesTableExists) {
-            // Get table structure
-            const [columns] = await pool.execute(`
-          DESCRIBE quizzes
-        `);
+// POST /api/quizzes/templates/:templateId/use - ใช้เทมเพลตสร้างข้อสอบ
+router.post('/templates/:templateId/use',
+    authenticateUser,
+    generalLimiter,
+    quizController.useQuizTemplate
+);
 
-            return res.status(200).json({
-                success: true,
-                message: 'Database connection successful',
-                dbTest: rows[0],
-                quizzesTableExists,
-                tableStructure: columns
-            });
-        } else {
-            return res.status(200).json({
-                success: true,
-                message: 'Database connection successful, but quizzes table does not exist',
-                dbTest: rows[0],
-                quizzesTableExists
-            });
-        }
-    } catch (error) {
-        console.error('Database test error:', error);
+/**
+ * Quiz Statistics Routes
+ * เส้นทางสำหรับสstatisticsข้อสอบ
+ */
 
-        return res.status(500).json({
-            success: false,
-            message: 'Database test failed',
-            error: error.message,
-            stack: error.stack
-        });
-    }
+// GET /api/quizzes/:id/statistics - ดูสถิติข้อสอบ
+router.get('/:id/statistics',
+    authenticateUser,
+    generalLimiter,
+    quizController.getQuizStatistics
+);
+
+// GET /api/quizzes/user/statistics - ดูสถิติการใช้งานของผู้ใช้
+router.get('/user/statistics',
+    authenticateUser,
+    generalLimiter,
+    quizController.getUserQuizStatistics
+);
+
+/**
+ * Quiz Sharing Routes
+ * เส้นทางสำหรับการแชร์ข้อสอบ
+ */
+
+// POST /api/quizzes/:id/share - แชร์ข้อสอบ
+router.post('/:id/share',
+    authenticateUser,
+    generalLimiter,
+    quizController.shareQuiz
+);
+
+// GET /api/quizzes/shared/:shareToken - เข้าถึงข้อสอบที่แชร์
+router.get('/shared/:shareToken',
+    quizController.getSharedQuiz
+);
+
+/**
+ * Error Handling Middleware
+ */
+router.use((error, req, res, next) => {
+    console.error('Quiz Routes Error:', error);
+    res.status(error.status || 500).json({
+        success: false,
+        message: error.message || 'Internal server error in quiz routes',
+        ...(process.env.NODE_ENV === 'development' && { stack: error.stack })
+    });
 });
 
-export default router;
+module.exports = router;
