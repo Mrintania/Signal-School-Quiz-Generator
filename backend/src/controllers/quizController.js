@@ -11,19 +11,26 @@ import fs from 'fs';
  */
 class QuizController {
   /**
-   * Generate a new quiz using AI
-   * @param {Object} req - Express request object
-   * @param {Object} res - Express response object
-   */
+ * Generate a new quiz using AI
+ * @param {Object} req - Express request object  
+ * @param {Object} res - Express response object
+ */
   static async generateQuiz(req, res) {
     try {
-      const { topic, questionType, numberOfQuestions, additionalInstructions, studentLevel, language } = req.body;
+      const { topic, url, questionType, numberOfQuestions, additionalInstructions, studentLevel, language } = req.body;
 
-      // Validate required fields
-      if (!topic || !questionType || !numberOfQuestions) {
+      // Validate required fields - either topic or URL is required
+      if (!questionType || !numberOfQuestions) {
         return res.status(400).json({
           success: false,
-          message: 'Required fields are missing: topic, questionType, and numberOfQuestions are required'
+          message: 'Required fields are missing: questionType and numberOfQuestions are required'
+        });
+      }
+
+      if (!topic && !url) {
+        return res.status(400).json({
+          success: false,
+          message: 'Either topic or url is required'
         });
       }
 
@@ -35,27 +42,44 @@ class QuizController {
         });
       }
 
-      // Generate quiz using AI service
-      const quizData = await aiService.generateQuiz({
-        topic,
+      // Normalize language parameter
+      let normalizedLanguage = language;
+      if (language === 'Thai (ไทย)') {
+        normalizedLanguage = 'thai';
+      } else if (language === 'English') {
+        normalizedLanguage = 'english';
+      }
+
+      // Prepare AI generation parameters
+      const aiParams = {
         questionType,
         numberOfQuestions,
         additionalInstructions,
         studentLevel,
-        language
-      });
+        language: normalizedLanguage
+      };
+
+      // Add either topic or URL
+      if (url) {
+        aiParams.url = url;
+      } else {
+        aiParams.topic = topic;
+      }
+
+      // Generate quiz using AI service
+      const quizData = await aiService.generateQuiz(aiParams);
 
       // Update user's AI generation count if available
       if (req.user?.userId) {
         try {
-          // This would typically be handled by a UserService in a full implementation
           await QuizService.incrementUserAIGenerationCount(req.user.userId);
 
           // Log activity if middleware available
           if (req.logActivity) {
+            const source = url ? `webpage: ${url}` : `topic: ${topic}`;
             await req.logActivity(
               'quiz_generate',
-              `Generated ${numberOfQuestions} ${questionType} questions about "${topic}"`
+              `Generated ${numberOfQuestions} ${questionType} questions from ${source}`
             );
           }
         } catch (error) {
@@ -77,13 +101,16 @@ class QuizController {
       let errorMessage = 'An error occurred while generating the quiz';
 
       if (error.message === 'AI generation timed out') {
-        statusCode = 504; // Gateway Timeout
+        statusCode = 504;
         errorMessage = 'Quiz generation timed out. Please try again with a simpler request.';
       } else if (error.message === 'AI service is currently unavailable') {
-        statusCode = 503; // Service Unavailable
+        statusCode = 503;
       } else if (error.message.includes('Invalid quiz data')) {
         statusCode = 500;
         errorMessage = 'Failed to generate valid quiz data. Please try again with different parameters.';
+      } else if (error.message.includes('Failed to fetch webpage')) {
+        statusCode = 400;
+        errorMessage = 'Failed to load the webpage. Please check the URL and try again.';
       }
 
       return res.status(statusCode).json({

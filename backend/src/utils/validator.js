@@ -39,12 +39,31 @@ const commonRules = {
       body('studentLevel').optional().trim().isLength({ max: 100 }).withMessage('Student level cannot exceed 100 characters'),
     ],
     generate: [
-      body('topic').trim().notEmpty().withMessage('Topic is required').isLength({ max: 200 }).withMessage('Topic cannot exceed 200 characters'),
+      // Topic validation - can be text or URL
+      body('topic').optional().trim().isLength({ max: 500 }).withMessage('Topic cannot exceed 500 characters'),
+      body('url').optional().isURL().withMessage('Must be a valid URL'),
+
+      // Ensure either topic or url is provided  
+      body().custom((value) => {
+        if (!value.topic && !value.url) {
+          throw new Error('Either topic or url is required');
+        }
+        return true;
+      }),
+
       body('questionType').isIn(['Multiple Choice', 'Essay']).withMessage('Invalid question type'),
       body('numberOfQuestions').isInt({ min: 1, max: 50 }).withMessage('Number of questions must be between 1 and 50'),
       body('studentLevel').optional().trim().isLength({ max: 100 }).withMessage('Student level cannot exceed 100 characters'),
       body('additionalInstructions').optional().trim().isLength({ max: 500 }).withMessage('Additional instructions cannot exceed 500 characters'),
-      body('language').optional().isIn(['thai', 'english']).withMessage('Invalid language')
+
+      // Updated language validation to handle display names
+      body('language').optional().custom((value) => {
+        const validLanguages = ['thai', 'english', 'Thai (ไทย)', 'English'];
+        if (value && !validLanguages.includes(value)) {
+          throw new Error('Invalid language');
+        }
+        return true;
+      })
     ],
     rename: [
       param('id').isInt().withMessage('Invalid quiz ID'),
@@ -215,27 +234,32 @@ const validate = (req, res, next) => {
   next();
 };
 
-// Sanitize and trim all inputs
+// Sanitize and trim all inputs - FIXED to prevent circular reference
 const sanitizeAll = (req, res, next) => {
-  // Sanitize body
-  if (req.body) {
-    for (const key in req.body) {
-      if (typeof req.body[key] === 'string') {
-        req.body[key] = req.body[key].trim();
+  try {
+    // Sanitize body
+    if (req.body && typeof req.body === 'object') {
+      for (const key in req.body) {
+        if (req.body.hasOwnProperty(key) && typeof req.body[key] === 'string') {
+          req.body[key] = req.body[key].trim();
+        }
       }
     }
-  }
 
-  // Sanitize query params
-  if (req.query) {
-    for (const key in req.query) {
-      if (typeof req.query[key] === 'string') {
-        req.query[key] = req.query[key].trim();
+    // Sanitize query params
+    if (req.query && typeof req.query === 'object') {
+      for (const key in req.query) {
+        if (req.query.hasOwnProperty(key) && typeof req.query[key] === 'string') {
+          req.query[key] = req.query[key].trim();
+        }
       }
     }
-  }
 
-  next();
+    next();
+  } catch (error) {
+    console.error('Sanitization error:', error);
+    next();
+  }
 };
 
 export { commonRules, validate, sanitizeAll };

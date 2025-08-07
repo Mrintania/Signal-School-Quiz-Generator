@@ -1,6 +1,14 @@
 import express from 'express';
 import QuizController from '../controllers/quizController.js';
 import { authenticateToken } from '../middlewares/auth.js';
+import { generalLimiter, aiGenerationLimiter } from '../middlewares/rateLimiter.js';
+import { commonRules, validate } from '../utils/validator.js';
+import { sanitizeInteger } from '../utils/sanitizer.js';
+import validator from 'validator';
+import ExportController from '../controllers/exportController.js';
+import { logger } from '../utils/logger.js';
+import QuizService from '../services/quizService.js';
+import { pool } from '../config/db.js';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -9,9 +17,6 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const router = express.Router();
-
-// Apply sanitization middleware to all routes
-router.use(sanitizeAll);
 
 // Apply general rate limiter to all quiz routes
 router.use(generalLimiter);
@@ -32,11 +37,11 @@ const storage = multer.diskStorage({
     filename: function (req, file, cb) {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
         const fileExtension = path.extname(file.originalname);
-        
+
         // Ensure UTF-8 filename handling
         const sanitizedOriginalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
         const baseFileName = path.basename(sanitizedOriginalName, fileExtension);
-        
+
         cb(null, `doc-${req.user.userId}-${uniqueSuffix}-${baseFileName}${fileExtension}`);
     }
 });
@@ -47,11 +52,11 @@ const fileFilter = (req, file, cb) => {
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         'text/plain'
     ];
-    
+
     // Handle UTF-8 filenames properly
     const originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
     file.originalname = originalName;
-    
+
     if (allowedTypes.includes(file.mimetype)) {
         cb(null, true);
     } else {
@@ -72,8 +77,6 @@ router.use((req, res, next) => {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     next();
 });
-
-router.use(authenticateToken);
 
 // API Route for generating a quiz - stricter rate limiting for AI calls
 router.post(
@@ -107,8 +110,29 @@ router.post(
     QuizController.saveQuiz
 );
 
-// API Route for getting all quizzes
-router.get('/', QuizController.getAllQuizzes);
+// API Route for getting all quizzes - FIXED VERSION
+router.get('/', async (req, res) => {
+    try {
+        // Simple sanitization for query parameters - avoid circular reference
+        const filters = {
+            page: sanitizeInteger(req.query.page, 1),
+            limit: sanitizeInteger(req.query.limit, 100),
+            category: req.query.category ? validator.escape(req.query.category.trim()) : undefined,
+            difficulty: req.query.difficulty ? validator.escape(req.query.difficulty.trim()) : undefined,
+            search: req.query.search ? validator.escape(req.query.search.trim()) : undefined,
+            folderId: req.query.folderId ? sanitizeInteger(req.query.folderId) : undefined
+        };
+
+        const quizzes = await QuizController.getAllQuizzes(req, res);
+    } catch (error) {
+        logger.error('Error in quiz route:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to retrieve quizzes',
+            error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+        });
+    }
+});
 
 // API Route for getting a quiz by ID
 router.get(
@@ -169,23 +193,20 @@ router.patch(
 // API Route for checking title availability
 router.get('/check-title', QuizController.checkTitleAvailability);
 
+// Database test route
 router.get('/test-db', async (req, res) => {
     try {
         // Test database connection
         const [rows] = await pool.execute('SELECT 1 as test');
 
         // Check if quizzes table exists
-        const [tables] = await pool.execute(`
-        SHOW TABLES LIKE 'quizzes'
-      `);
+        const [tables] = await pool.execute(`SHOW TABLES LIKE 'quizzes'`);
 
         const quizzesTableExists = tables.length > 0;
 
         if (quizzesTableExists) {
             // Get table structure
-            const [columns] = await pool.execute(`
-          DESCRIBE quizzes
-        `);
+            const [columns] = await pool.execute(`DESCRIBE quizzes`);
 
             return res.status(200).json({
                 success: true,

@@ -28,6 +28,7 @@
     "openai": "^4.87.3",
     "pdf-parse": "^1.1.1",
     "pdf2pic": "^3.2.0",
+    "validator": "^13.15.15",
     "winston": "^3.17.0",
     "xss-clean": "^0.1.4"
   },
