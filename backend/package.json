@@ -3,29 +3,30 @@
   "module": "index.js",
   "type": "module",
   "devDependencies": {
-    "@types/bun": "^1.2.8",
-    "nodemon": "^3.0.1"
+    "@types/bun": "^1.2.19",
+    "nodemon": "^3.1.10"
   },
   "peerDependencies": {
-    "typescript": "^5.0.0"
+    "typescript": "^5.9.2"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "@google/generative-ai": "^0.24.1",
     "bcrypt": "^5.1.1",
     "cors": "^2.8.5",
-    "dotenv": "^16.4.7",
+    "dotenv": "^16.6.1",
     "express": "^4.21.2",
-    "express-rate-limit": "^7.5.0",
+    "express-rate-limit": "^7.5.1",
     "express-validator": "^7.2.1",
     "helmet": "^8.1.0",
     "hpp": "^0.2.3",
+    "isomorphic-dompurify": "^2.26.0",
     "jsonwebtoken": "^9.0.2",
-    "multer": "^2.0.1",
-    "mysql2": "^3.14.0",
+    "multer": "^2.0.2",
+    "mysql2": "^3.14.3",
     "node-cache": "^5.1.2",
-    "nodemailer": "^7.0.3",
-    "openai": "^4.87.3",
+    "nodemailer": "^7.0.5",
+    "openai": "^4.104.0",
     "pdf-parse": "^1.1.1",
     "pdf2pic": "^3.2.0",
     "winston": "^3.17.0",
