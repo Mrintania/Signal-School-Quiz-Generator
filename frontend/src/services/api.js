@@ -151,24 +151,42 @@ export const quizService = {
    * @param {Object} data - Quiz generation parameters
    * @returns {Promise} API response
    */
-  generateQuiz: async (data) => {
+  generateQuiz: async (quizData) => {
     try {
-      const response = await api.post('/quizzes/generate', data);
+      console.log('API Service - Sending data:', quizData);
+
+      const response = await api.post('/quizzes/generate', {
+        topic: quizData.topic,
+        questionType: quizData.questionType,
+        numberOfQuestions: parseInt(quizData.numberOfQuestions),
+        additionalInstructions: quizData.additionalInstructions || '',
+        studentLevel: quizData.studentLevel || '',
+        outputLanguage: quizData.outputLanguage  // ✅ ส่ง outputLanguage
+      });
+
+      console.log('API Response:', response.data);
       return response.data;
     } catch (error) {
-      console.error('Error generating quiz:', error);
-      throw error.response?.data || { success: false, message: 'Failed to generate quiz' };
+      console.error('API Error:', error);
+      throw error;
     }
   },
 
   /**
-   * Generate quiz from uploaded file
-   * @param {FormData} formData - File and settings
-   * @param {Object} options - Upload options
-   * @returns {Promise} API response
-   */
+ * Generate quiz from uploaded file
+ * @param {FormData} formData - File and settings
+ * @param {Object} options - Upload options
+ * @returns {Promise} API response
+ */
   generateQuizFromFile: async (formData, options = {}) => {
     try {
+      console.log('=== API SERVICE DEBUG ===');
+      console.log('FormData entries:');
+      for (let [key, value] of formData.entries()) {
+        console.log(key, value);
+      }
+      console.log('========================');
+
       const response = await api.post('/quizzes/generate-from-file', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
@@ -177,31 +195,49 @@ export const quizService = {
         timeout: 120000, // 2 minutes timeout for file processing
       });
 
-      return {
-        success: true,
-        data: response.data.quiz,
-        message: response.data.message
-      };
+      console.log('API Response:', response.data);
+
+      // ✅ ปรับปรุงการจัดการ response
+      if (response.data.success) {
+        return {
+          success: true,
+          data: response.data.quiz || response.data.data,
+          message: response.data.message || 'สร้างข้อสอบจากไฟล์สำเร็จ'
+        };
+      } else {
+        throw new Error(response.data.message || 'ไม่สามารถสร้างข้อสอบจากไฟล์ได้');
+      }
+
     } catch (error) {
       console.error('File quiz generation error:', error);
-      
+
+      // ✅ ปรับปรุง error handling
       if (error.code === 'ECONNABORTED') {
         throw new Error('การประมวลผลไฟล์ใช้เวลานานเกินไป กรุณาลองใหม่อีกครั้ง');
       }
-      
+
       if (error.response?.status === 413) {
-        throw new Error('ไฟล์มีขนาดใหญ่เกินไป');
+        throw new Error('ไฟล์มีขนาดใหญ่เกินไป (สูงสุด 10MB)');
       }
-      
+
       if (error.response?.status === 415) {
-        throw new Error('รูปแบบไฟล์ไม่ถูกต้อง');
+        throw new Error('รูปแบบไฟล์ไม่ถูกต้อง รองรับเฉพาะ PDF, DOCX และ TXT');
       }
-      
-      throw {
-        success: false,
-        message: error.response?.data?.message || 'ไม่สามารถสร้างข้อสอบจากไฟล์ได้',
-        error: error.response?.data?.error
-      };
+
+      if (error.response?.status === 400) {
+        throw new Error(error.response.data?.message || 'ข้อมูลไฟล์ไม่ถูกต้อง');
+      }
+
+      if (error.response?.status === 503) {
+        throw new Error('บริการ AI ไม่พร้อมใช้งานชั่วคราว กรุณาลองใหม่อีกครั้ง');
+      }
+
+      // Default error
+      const errorMessage = error.response?.data?.message ||
+        error.message ||
+        'ไม่สามารถสร้างข้อสอบจากไฟล์ได้';
+
+      throw new Error(errorMessage);
     }
   },
 

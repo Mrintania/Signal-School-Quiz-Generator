@@ -73,10 +73,10 @@ class AIService {
         try {
             // Select model and set parameters
             const model = this.genAI.getGenerativeModel({
-                model: "gemini-2.5-flash-lite-preview-06-17", // Use latest available model
+                model: "gemini-2.5-flash", // Use latest available model
                 generationConfig: {
                     temperature: 1,
-                    maxOutputTokens: 64000,
+                    maxOutputTokens: 65536,
                 },
             });
 
@@ -140,59 +140,98 @@ class AIService {
      * @private
      */
     _createPrompt(topic, questionType, numberOfQuestions, additionalInstructions, studentLevel, language) {
-        // Set language for quiz
-        const languagePrompt = language === 'thai'
-            ? "Create the quiz in Thai language."
-            : "Create the quiz in English language.";
+        console.log('Creating prompt with language:', language);
 
-        let prompt = `Create a ${questionType} quiz about "${topic}" with ${numberOfQuestions} questions. ${languagePrompt}`;
+        // ✅ Debug เพิ่มเติม
+        console.log('Language type:', typeof language);
+        console.log('Language value:', JSON.stringify(language));
 
-        if (studentLevel) {
-            prompt += ` The quiz is intended for ${studentLevel} level students.`;
+        // ✅ แก้ไขการตรวจสอบภาษา - รองรับทั้ง Thai และ thai
+        const isThaiLanguage = language && (
+            language.toLowerCase() === 'thai' ||
+            language.toLowerCase() === 'ไทย' ||
+            language === 'Thai' ||
+            language === 'thai'
+        );
+
+        console.log('Is Thai Language?', isThaiLanguage);
+
+        let prompt = '';
+
+        if (isThaiLanguage) {
+            console.log('Using Thai prompt template');
+            prompt = `สร้างข้อสอบภาษาไทยเรื่อง "${topic}"
+
+**สำคัญที่สุด: ข้อสอบทั้งหมดต้องเป็นภาษาไทยเท่านั้น ห้ามใช้ภาษาอังกฤษเด็ดขาด**
+
+รายละเอียดการสร้างข้อสอบ:
+- หัวข้อ: ${topic}
+- จำนวนข้อ: ${numberOfQuestions} ข้อ
+- ประเภทคำถาม: ${questionType}
+- ทุกอย่างต้องเป็นภาषาไทย: คำถาม, ตัวเลือก, คำอธิบาย
+
+ตัวอย่างรูปแบบที่ต้องการ:
+{
+  "questions": [
+    {
+      "questionText": "การรักษาความปลอดภัยไซเบอร์มีวัตถุประสงค์หลักอะไร?",
+      "options": [
+        {"text": "เพื่อเพิ่มความเร็วในการใช้อินเทอร์เน็ต", "isCorrect": false},
+        {"text": "เพื่อปกป้องระบบคอมพิวเตอร์และข้อมูลจากภัยคุกคาม", "isCorrect": true},
+        {"text": "เพื่อพัฒนาแอปพลิเคชันใหม่ๆ", "isCorrect": false},
+        {"text": "เพื่อสร้างเกมออนไลน์", "isCorrect": false}
+      ],
+      "explanation": "การรักษาความปลอดภัยไซเบอร์มีจุดประสงค์หลักในการปกป้องระบบคอมพิวเตอร์ เครือข่าย และข้อมูลจากการถูกโจมตี การเข้าถึงโดยไม่ได้รับอนุญาต หรือความเสียหายต่างๆ"
+    }
+  ]
+}
+
+กรุณาสร้างข้อสอบ ${numberOfQuestions} ข้อตามรูปแบบข้างต้น โดยใช้ภาษาไทยทั้งหมด`;
+        } else {
+            console.log('Using English prompt template');
+            prompt = `Create an English quiz about "${topic}"
+
+**IMPORTANT: All content must be in English only**
+
+Details:
+- Number of questions: ${numberOfQuestions}
+- Type: ${questionType}
+- All questions, options, and explanations must be in English
+
+JSON Format:
+{
+  "questions": [
+    {
+      "questionText": "Question in English",
+      "options": [
+        {"text": "Option A", "isCorrect": false},
+        {"text": "Option B", "isCorrect": true},
+        {"text": "Option C", "isCorrect": false},
+        {"text": "Option D", "isCorrect": false}
+      ],
+      "explanation": "Explanation in English"
+    }
+  ]
+}`;
         }
 
-        // Add any additional instructions
         if (additionalInstructions) {
-            prompt += ` Additional instructions: ${additionalInstructions}`;
-
-            // Emphasize avoiding duplication if requested
-            if (additionalInstructions.includes("avoid duplication") ||
-                additionalInstructions.includes("different questions")) {
-                prompt += ` IMPORTANT: Please make sure to generate completely new and different questions that do not duplicate any previous questions on this topic.`;
+            if (isThaiLanguage) {
+                prompt += `\n\nข้อกำหนดเพิ่มเติม: ${additionalInstructions}`;
+            } else {
+                prompt += `\n\nAdditional requirements: ${additionalInstructions}`;
             }
         }
 
-        // Add format instructions based on question type
-        if (questionType === 'Multiple Choice') {
-            prompt += ` For each question, provide 4 options (A, B, C, D), indicate the correct answer, and include a brief explanation of why the answer is correct.`;
-            prompt += ` Return the quiz in the following JSON format ONLY (do not include any other text or explanations outside the JSON):
-      {
-        "questions": [
-          {
-            "questionText": "Question text here",
-            "options": [
-              { "text": "Option A", "isCorrect": false },
-              { "text": "Option B", "isCorrect": true },
-              { "text": "Option C", "isCorrect": false },
-              { "text": "Option D", "isCorrect": false }
-            ],
-            "explanation": "Explanation of the correct answer"
-          }
-        ]
-      }`;
-        } else if (questionType === 'Essay') {
-            prompt += ` For each question, provide a brief guideline on what a good answer should include.`;
-            prompt += ` Return the quiz in the following JSON format ONLY (do not include any other text or explanations outside the JSON):
-      {
-        "questions": [
-          {
-            "questionText": "Question text here",
-            "explanation": "Guidelines for a good answer"
-          }
-        ]
-      }`;
+        if (studentLevel) {
+            if (isThaiLanguage) {
+                prompt += `\n\nระดับนักเรียน: ${studentLevel}`;
+            } else {
+                prompt += `\n\nStudent level: ${studentLevel}`;
+            }
         }
 
+        console.log('Final prompt:', prompt);
         return prompt;
     }
 

@@ -5,6 +5,7 @@ import { cacheService } from '../services/cacheService.js';
 import { ErrorService } from '../services/errorService.js';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import fs from 'fs';
+import * as cheerio from 'cheerio';
 
 /**
  * Controller for handling quiz-related endpoints
@@ -17,79 +18,142 @@ class QuizController {
    */
   static async generateQuiz(req, res) {
     try {
-      const { topic, questionType, numberOfQuestions, additionalInstructions, studentLevel, language } = req.body;
+      const {
+        topic,
+        questionType,
+        numberOfQuestions,
+        additionalInstructions,
+        studentLevel,
+        outputLanguage,
+        webpageUrl  // ✅ เพิ่มรับ webpageUrl
+      } = req.body;
+
+      console.log('=== BACKEND DEBUG ===');
+      console.log('Received request body:', req.body);
+      console.log('Webpage URL:', webpageUrl);
+      console.log('===================');
 
       // Validate required fields
-      if (!topic || !questionType || !numberOfQuestions) {
+      if (!questionType || !numberOfQuestions) {
         return res.status(400).json({
           success: false,
-          message: 'Required fields are missing: topic, questionType, and numberOfQuestions are required'
+          message: 'Required fields are missing'
         });
       }
 
-      // Check if AI service is available
-      if (!aiService.isAvailable()) {
-        return res.status(503).json({
-          success: false,
-          message: 'AI service is currently unavailable'
-        });
-      }
+      let finalTopic = topic;
+      let finalInstructions = additionalInstructions || '';
 
-      // Generate quiz using AI service
-      const quizData = await aiService.generateQuiz({
-        topic, 
-        questionType, 
-        numberOfQuestions, 
-        additionalInstructions, 
-        studentLevel, 
-        language
-      });
-
-      // Update user's AI generation count if available
-      if (req.user?.userId) {
+      // ✅ จัดการ webpage URL
+      if (webpageUrl) {
         try {
-          // This would typically be handled by a UserService in a full implementation
-          await QuizService.incrementUserAIGenerationCount(req.user.userId);
-          
-          // Log activity if middleware available
-          if (req.logActivity) {
-            await req.logActivity(
-              'quiz_generate', 
-              `Generated ${numberOfQuestions} ${questionType} questions about "${topic}"`
-            );
+          console.log('Fetching webpage content from:', webpageUrl);
+
+          // Fetch webpage content
+          const response = await axios.get(webpageUrl, {
+            timeout: 10000,
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (compatible; Quiz Generator Bot)'
+            }
+          });
+
+          // Extract text content using cheerio
+          const $ = cheerio.load(response.data);
+
+          // Remove script and style elements
+          $('script, style, nav, footer, header').remove();
+
+          // Get main content (try different selectors)
+          let content = '';
+          const contentSelectors = [
+            'article',
+            'main',
+            '.content',
+            '.post-content',
+            '.entry-content',
+            'body'
+          ];
+
+          for (const selector of contentSelectors) {
+            const element = $(selector);
+            if (element.length > 0) {
+              content = element.text().trim();
+              break;
+            }
           }
-        } catch (error) {
-          // Non-critical error, just log it
-          logger.warn(`Failed to update AI generation count for user ${req.user.userId}:`, error);
+
+          // Clean up content
+          content = content
+            .replace(/\s+/g, ' ')
+            .replace(/\n+/g, '\n')
+            .trim()
+            .substring(0, 5000); // Limit content length
+
+          console.log('Extracted content length:', content.length);
+
+          if (content.length > 100) {
+            finalTopic = finalTopic || `Content from ${webpageUrl}`;
+            finalInstructions = `${finalInstructions}\n\nGenerate questions based on the following webpage content:\n\n${content}`;
+          } else {
+            throw new Error('Unable to extract sufficient content from webpage');
+          }
+
+        } catch (webError) {
+          console.error('Webpage fetch error:', webError);
+          return res.status(400).json({
+            success: false,
+            message: 'ไม่สามารถดึงข้อมูลจากเว็บไซต์ได้ กรุณาตรวจสอบ URL หรือลองใหม่อีกครั้ง'
+          });
         }
       }
 
-      // Return successful response
+      // ตรวจสอบว่ามี topic หรือไม่
+      if (!finalTopic || finalTopic.trim() === '') {
+        return res.status(400).json({
+          success: false,
+          message: 'กรุณาระบุหัวข้อหรือเนื้อหาที่ต้องการสร้างข้อสอบ'
+        });
+      }
+
+      // ✅ Normalize language value
+      const language = outputLanguage ? outputLanguage.toLowerCase() : 'thai';
+
+      console.log('Final topic:', finalTopic);
+      console.log('Final instructions length:', finalInstructions.length);
+      console.log('Using language:', language);
+
+      // Generate quiz using AI service
+      const quizData = await aiService.generateQuiz({
+        topic: finalTopic,
+        questionType,
+        numberOfQuestions,
+        additionalInstructions: finalInstructions,
+        studentLevel,
+        language
+      });
+
       return res.status(200).json({
         success: true,
         data: quizData
       });
-    } catch (error) {
-      logger.error('Error generating quiz:', error);
 
-      // Determine appropriate error message and status code
+    } catch (error) {
+      console.error('Error generating quiz:', error);
+
       let statusCode = 500;
-      let errorMessage = 'An error occurred while generating the quiz';
-      
+      let errorMessage = 'เกิดข้อผิดพลาดในการสร้างข้อสอบ';
+
       if (error.message === 'AI generation timed out') {
-        statusCode = 504; // Gateway Timeout
-        errorMessage = 'Quiz generation timed out. Please try again with a simpler request.';
-      } else if (error.message === 'AI service is currently unavailable') {
-        statusCode = 503; // Service Unavailable
-      } else if (error.message.includes('Invalid quiz data')) {
-        statusCode = 500;
-        errorMessage = 'Failed to generate valid quiz data. Please try again with different parameters.';
+        statusCode = 504;
+        errorMessage = 'การสร้างข้อสอบใช้เวลานานเกินไป กรุณาลองใหม่อีกครั้ง';
+      } else if (error.message.includes('AI service')) {
+        statusCode = 503;
+        errorMessage = 'บริการ AI ไม่พร้อมใช้งานชั่วคราว กรุณาลองใหม่อีกครั้ง';
       }
 
       return res.status(statusCode).json({
         success: false,
-        message: errorMessage,
-        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        message: errorMessage
       });
     }
   }
@@ -119,7 +183,7 @@ class QuizController {
           message: 'Authentication is required to save quizzes'
         });
       }
-      
+
       quizData.userId = userId;
 
       // Check for duplicate title and get suggested title if needed
@@ -134,11 +198,11 @@ class QuizController {
       if (result.success) {
         // Log success
         logger.info(`Quiz saved successfully: ${quizData.title} (ID: ${result.quizId})`);
-        
+
         // Invalidate relevant cache entries
         cacheService.delete(`quizCount:user:${userId}`);
         cacheService.invalidateByPattern(`quizzes:user:${userId}`);
-        
+
         // If this is an activity logger middleware, log it
         if (req.logActivity) {
           await req.logActivity('quiz_create', `Created quiz: ${quizData.title} (ID: ${result.quizId})`);
@@ -153,7 +217,7 @@ class QuizController {
         });
       } else {
         logger.error('Failed to save quiz:', result.error);
-        
+
         return res.status(500).json({
           success: false,
           message: 'Failed to save quiz',
@@ -179,7 +243,7 @@ class QuizController {
   static async getAllQuizzes(req, res) {
     try {
       logger.info('Fetching all quizzes');
-      
+
       // Get pagination and filter parameters
       const page = parseInt(req.query.page) || 1;
       const limit = parseInt(req.query.limit) || 100;
@@ -188,20 +252,20 @@ class QuizController {
       const folder = req.query.folder || null;
       const sortBy = req.query.sortBy || 'created_at';
       const sortOrder = req.query.sortOrder || 'desc';
-      
+
       // Get user ID from auth token if available
       const userId = req.user?.userId;
-      
+
       // Generate cache key
       const cacheKey = `quizzes:${userId || 'public'}:page${page}:limit${limit}:search${search || ''}:folder${folder || ''}:sort${sortBy}${sortOrder}`;
-      
+
       // Try to get from cache first
       const cachedData = cacheService.get(cacheKey);
       if (cachedData) {
         logger.debug(`Using cached quiz list: ${cacheKey}`);
         return res.status(200).json(cachedData);
       }
-      
+
       // Fetch quizzes from database
       const result = await QuizService.getAllQuizzes({
         limit,
@@ -212,7 +276,7 @@ class QuizController {
         sortBy,
         sortOrder
       });
-      
+
       // Build response with pagination
       const response = {
         success: true,
@@ -224,14 +288,14 @@ class QuizController {
           totalPages: Math.ceil(result.total / limit)
         }
       };
-      
+
       // Cache the response
       cacheService.set(cacheKey, response, 300); // Cache for 5 minutes
-      
+
       return res.status(200).json(response);
     } catch (error) {
       logger.error('Error fetching quizzes:', error);
-      
+
       // Return empty results rather than error for better UX
       return res.status(200).json({
         success: true,
@@ -246,7 +310,7 @@ class QuizController {
       });
     }
   }
-  
+
   /**
    * Get a quiz by ID
    * @param {Object} req - Express request object
@@ -266,7 +330,7 @@ class QuizController {
 
       // Generate cache key
       const cacheKey = `quiz:${id}`;
-      
+
       // Try to get from cache first
       const cachedQuiz = cacheService.get(cacheKey);
       if (cachedQuiz) {
@@ -286,7 +350,7 @@ class QuizController {
           message: 'Quiz not found'
         });
       }
-      
+
       // Verify user has access to the quiz if it's not public
       // If userId is available and not matching quiz creator, check permissions
       const userId = req.user?.userId;
@@ -299,10 +363,10 @@ class QuizController {
           });
         }
       }
-      
+
       // Cache the result
       cacheService.set(cacheKey, quiz, 600); // Cache for 10 minutes
-      
+
       // Log view activity
       if (userId && req.logActivity) {
         await req.logActivity('quiz_view', `Viewed quiz: ${quiz.title} (ID: ${id})`);
@@ -340,7 +404,7 @@ class QuizController {
           message: 'Quiz ID is required'
         });
       }
-      
+
       // Check if user is the owner of the quiz
       const quiz = await QuizService.getQuizById(id);
       if (!quiz) {
@@ -349,7 +413,7 @@ class QuizController {
           message: 'Quiz not found'
         });
       }
-      
+
       // Verify user has permission to delete this quiz
       if (quiz.user_id !== userId) {
         // Check if user is an admin
@@ -370,7 +434,7 @@ class QuizController {
         cacheService.delete(`quiz:${id}`);
         cacheService.delete(`quizCount:user:${userId}`);
         cacheService.invalidateByPattern(`quizzes:${userId || 'public'}`);
-        
+
         // Log activity if middleware available
         if (req.logActivity) {
           await req.logActivity('quiz_delete', `Deleted quiz: ${quiz.title} (ID: ${id})`);
@@ -423,7 +487,7 @@ class QuizController {
           message: 'New title is required'
         });
       }
-      
+
       // Check if user is the owner of the quiz
       const quiz = await QuizService.getQuizById(id);
       if (!quiz) {
@@ -432,7 +496,7 @@ class QuizController {
           message: 'Quiz not found'
         });
       }
-      
+
       // Verify user has permission to rename this quiz
       if (quiz.user_id !== userId) {
         // Check if user is an admin
@@ -456,7 +520,7 @@ class QuizController {
         // Invalidate relevant cache entries
         cacheService.delete(`quiz:${id}`);
         cacheService.invalidateByPattern(`quizzes:${userId || 'public'}`);
-        
+
         // Log activity if middleware available
         if (req.logActivity) {
           await req.logActivity('quiz_rename', `Renamed quiz from "${quiz.title}" to "${finalTitle}" (ID: ${id})`);
@@ -511,7 +575,7 @@ class QuizController {
           message: 'Questions array is required'
         });
       }
-      
+
       // Check if user is the owner of the quiz
       const quiz = await QuizService.getQuizById(id);
       if (!quiz) {
@@ -520,7 +584,7 @@ class QuizController {
           message: 'Quiz not found'
         });
       }
-      
+
       // Verify user has permission to update this quiz
       if (quiz.user_id !== userId) {
         // Check if user is an admin or has collaborator access
@@ -539,7 +603,7 @@ class QuizController {
       if (result.success) {
         // Invalidate relevant cache entries
         cacheService.delete(`quiz:${id}`);
-        
+
         // Log activity if middleware available
         if (req.logActivity) {
           await req.logActivity('quiz_update', `Updated questions for quiz: ${quiz.title} (ID: ${id})`);
@@ -592,7 +656,7 @@ class QuizController {
           message: 'Folder ID is required'
         });
       }
-      
+
       // Check if user is the owner of the quiz
       const quiz = await QuizService.getQuizById(id);
       if (!quiz) {
@@ -601,7 +665,7 @@ class QuizController {
           message: 'Quiz not found'
         });
       }
-      
+
       // Verify user has permission to move this quiz
       if (quiz.user_id !== userId) {
         return res.status(403).json({
@@ -609,7 +673,7 @@ class QuizController {
           message: 'You do not have permission to move this quiz'
         });
       }
-      
+
       // Check if folder exists and belongs to the user
       const folderExists = await QuizService.checkFolderAccess(folderId, userId);
       if (!folderExists) {
@@ -627,7 +691,7 @@ class QuizController {
         cacheService.delete(`quiz:${id}`);
         cacheService.invalidateByPattern(`quizzes:${userId}`);
         cacheService.invalidateByPattern(`folder:${folderId}`);
-        
+
         // Log activity if middleware available
         if (req.logActivity) {
           await req.logActivity('quiz_move', `Moved quiz: ${quiz.title} (ID: ${id}) to folder (ID: ${folderId})`);
@@ -664,17 +728,17 @@ class QuizController {
     try {
       const { title } = req.query;
       const userId = req.user?.userId;
-      
+
       if (!title) {
         return res.status(400).json({
           success: false,
           message: 'Title is required'
         });
       }
-      
+
       // Check title availability
       const result = await QuizService.checkDuplicateTitle(title, userId);
-      
+
       return res.status(200).json({
         success: true,
         data: result
@@ -689,7 +753,7 @@ class QuizController {
       });
     }
   }
-  
+
   /**
    * Get quiz statistics
    * @param {Object} req - Express request object
@@ -707,7 +771,7 @@ class QuizController {
           message: 'Quiz ID is required'
         });
       }
-      
+
       // Check if quiz exists
       const quiz = await QuizService.getQuizById(id);
       if (!quiz) {
@@ -716,7 +780,7 @@ class QuizController {
           message: 'Quiz not found'
         });
       }
-      
+
       // Verify user has permission to view quiz statistics
       if (quiz.user_id !== userId) {
         const hasAccess = await QuizService.checkQuizAccess(id, userId);
@@ -727,10 +791,10 @@ class QuizController {
           });
         }
       }
-      
+
       // Generate cache key
       const cacheKey = `quiz:${id}:stats`;
-      
+
       // Try to get from cache first
       const cachedStats = cacheService.get(cacheKey);
       if (cachedStats) {
@@ -740,13 +804,13 @@ class QuizController {
           data: cachedStats
         });
       }
-      
+
       // Get quiz statistics
       const statistics = await QuizService.getQuizStatistics(id);
-      
+
       // Cache the result
       cacheService.set(cacheKey, statistics, 600); // Cache for 10 minutes
-      
+
       return res.status(200).json({
         success: true,
         data: statistics
@@ -761,7 +825,7 @@ class QuizController {
       });
     }
   }
-  
+
   /**
    * Create a new folder
    * @param {Object} req - Express request object
@@ -771,7 +835,7 @@ class QuizController {
     try {
       const { name, parentId } = req.body;
       const userId = req.user?.userId;
-      
+
       // Validate inputs
       if (!name) {
         return res.status(400).json({
@@ -779,7 +843,7 @@ class QuizController {
           message: 'Folder name is required'
         });
       }
-      
+
       // Check if parent folder exists and user has access (if provided)
       if (parentId) {
         const hasAccess = await QuizService.checkFolderAccess(parentId, userId);
@@ -790,22 +854,22 @@ class QuizController {
           });
         }
       }
-      
+
       // Create folder
       const result = await QuizService.createFolder(name, userId, parentId);
-      
+
       if (result.success) {
         // Invalidate relevant cache entries
         cacheService.invalidateByPattern(`folders:${userId}`);
         if (parentId) {
           cacheService.invalidateByPattern(`folder:${parentId}`);
         }
-        
+
         // Log activity if middleware available
         if (req.logActivity) {
           await req.logActivity('folder_create', `Created folder: ${name} (ID: ${result.folderId})`);
         }
-        
+
         return res.status(201).json({
           success: true,
           message: 'Folder created successfully',
@@ -828,7 +892,7 @@ class QuizController {
       });
     }
   }
-  
+
   /**
    * Get all folders for the current user
    * @param {Object} req - Express request object
@@ -837,17 +901,17 @@ class QuizController {
   static async getFolders(req, res) {
     try {
       const userId = req.user?.userId;
-      
+
       if (!userId) {
         return res.status(401).json({
           success: false,
           message: 'Authentication is required to access folders'
         });
       }
-      
+
       // Generate cache key
       const cacheKey = `folders:${userId}`;
-      
+
       // Try to get from cache first
       const cachedFolders = cacheService.get(cacheKey);
       if (cachedFolders) {
@@ -857,13 +921,13 @@ class QuizController {
           data: cachedFolders
         });
       }
-      
+
       // Get folders
       const folders = await QuizService.getUserFolders(userId);
-      
+
       // Cache the result
       cacheService.set(cacheKey, folders, 600); // Cache for 10 minutes
-      
+
       return res.status(200).json({
         success: true,
         data: folders
@@ -878,7 +942,7 @@ class QuizController {
       });
     }
   }
-  
+
   /**
    * Get quizzes in a folder
    * @param {Object} req - Express request object
@@ -891,7 +955,7 @@ class QuizController {
       const page = parseInt(req.query.page) || 1;
       const limit = parseInt(req.query.limit) || 100;
       const offset = (page - 1) * limit;
-      
+
       // Validate folder ID
       if (!folderId) {
         return res.status(400).json({
@@ -899,7 +963,7 @@ class QuizController {
           message: 'Folder ID is required'
         });
       }
-      
+
       // Check if user has access to the folder
       const hasAccess = await QuizService.checkFolderAccess(folderId, userId);
       if (!hasAccess) {
@@ -908,20 +972,20 @@ class QuizController {
           message: 'You do not have access to this folder'
         });
       }
-      
+
       // Generate cache key
       const cacheKey = `folder:${folderId}:quizzes:page${page}:limit${limit}`;
-      
+
       // Try to get from cache first
       const cachedData = cacheService.get(cacheKey);
       if (cachedData) {
         logger.debug(`Using cached folder quizzes: ${cacheKey}`);
         return res.status(200).json(cachedData);
       }
-      
+
       // Get folder quizzes
       const result = await QuizService.getFolderQuizzes(folderId, { limit, offset });
-      
+
       // Build response with pagination
       const response = {
         success: true,
@@ -933,14 +997,14 @@ class QuizController {
           totalPages: Math.ceil(result.total / limit)
         }
       };
-      
+
       // Cache the response
       cacheService.set(cacheKey, response, 300); // Cache for 5 minutes
-      
+
       return res.status(200).json(response);
     } catch (error) {
       logger.error('Error fetching folder quizzes:', error);
-      
+
       return res.status(500).json({
         success: false,
         message: 'An error occurred while fetching folder quizzes',
@@ -948,7 +1012,7 @@ class QuizController {
       });
     }
   }
-  
+
   /**
    * Share a quiz with other users
    * @param {Object} req - Express request object
@@ -959,7 +1023,7 @@ class QuizController {
       const { id } = req.params;
       const { emails, permissions } = req.body;
       const userId = req.user?.userId;
-      
+
       // Validate inputs
       if (!id) {
         return res.status(400).json({
@@ -967,14 +1031,14 @@ class QuizController {
           message: 'Quiz ID is required'
         });
       }
-      
+
       if (!emails || !Array.isArray(emails) || emails.length === 0) {
         return res.status(400).json({
           success: false,
           message: 'At least one email address is required'
         });
       }
-      
+
       // Check if permissions is valid
       if (!permissions || !['view', 'edit'].includes(permissions)) {
         return res.status(400).json({
@@ -982,7 +1046,7 @@ class QuizController {
           message: 'Valid permissions are required (view or edit)'
         });
       }
-      
+
       // Check if user is the owner of the quiz
       const quiz = await QuizService.getQuizById(id);
       if (!quiz) {
@@ -991,7 +1055,7 @@ class QuizController {
           message: 'Quiz not found'
         });
       }
-      
+
       // Verify user has permission to share this quiz
       if (quiz.user_id !== userId) {
         return res.status(403).json({
@@ -999,22 +1063,22 @@ class QuizController {
           message: 'You do not have permission to share this quiz'
         });
       }
-      
+
       // Share quiz with each email
       const results = await QuizService.shareQuiz(id, emails, permissions);
-      
+
       // Invalidate relevant cache entries
       cacheService.delete(`quiz:${id}`);
       cacheService.invalidateByPattern(`quiz:${id}:shares`);
-      
+
       // Log activity if middleware available
       if (req.logActivity) {
         await req.logActivity(
-          'quiz_share', 
+          'quiz_share',
           `Shared quiz: ${quiz.title} (ID: ${id}) with ${results.successful.length} users`
         );
       }
-      
+
       return res.status(200).json({
         success: true,
         message: `Quiz shared successfully with ${results.successful.length} users`,
@@ -1022,7 +1086,7 @@ class QuizController {
       });
     } catch (error) {
       logger.error('Error sharing quiz:', error);
-      
+
       return res.status(500).json({
         success: false,
         message: 'An error occurred while sharing the quiz',
@@ -1030,7 +1094,7 @@ class QuizController {
       });
     }
   }
-  
+
   /**
    * Get list of users a quiz is shared with
    * @param {Object} req - Express request object
@@ -1040,7 +1104,7 @@ class QuizController {
     try {
       const { id } = req.params;
       const userId = req.user?.userId;
-      
+
       // Validate inputs
       if (!id) {
         return res.status(400).json({
@@ -1048,7 +1112,7 @@ class QuizController {
           message: 'Quiz ID is required'
         });
       }
-      
+
       // Check if user is the owner of the quiz
       const quiz = await QuizService.getQuizById(id);
       if (!quiz) {
@@ -1057,7 +1121,7 @@ class QuizController {
           message: 'Quiz not found'
         });
       }
-      
+
       // Verify user has permission to view shares
       if (quiz.user_id !== userId) {
         // Check if user is an admin
@@ -1069,10 +1133,10 @@ class QuizController {
           });
         }
       }
-      
+
       // Generate cache key
       const cacheKey = `quiz:${id}:shares`;
-      
+
       // Try to get from cache first
       const cachedShares = cacheService.get(cacheKey);
       if (cachedShares) {
@@ -1082,20 +1146,20 @@ class QuizController {
           data: cachedShares
         });
       }
-      
+
       // Get shares
       const shares = await QuizService.getQuizShares(id);
-      
+
       // Cache the result
       cacheService.set(cacheKey, shares, 600); // Cache for 10 minutes
-      
+
       return res.status(200).json({
         success: true,
         data: shares
       });
     } catch (error) {
       logger.error('Error fetching quiz shares:', error);
-      
+
       return res.status(500).json({
         success: false,
         message: 'An error occurred while fetching quiz shares',
@@ -1103,7 +1167,7 @@ class QuizController {
       });
     }
   }
-  
+
   /**
    * Remove share access for a user
    * @param {Object} req - Express request object
@@ -1114,7 +1178,7 @@ class QuizController {
       const { id } = req.params;
       const { email } = req.body;
       const userId = req.user?.userId;
-      
+
       // Validate inputs
       if (!id) {
         return res.status(400).json({
@@ -1122,14 +1186,14 @@ class QuizController {
           message: 'Quiz ID is required'
         });
       }
-      
+
       if (!email) {
         return res.status(400).json({
           success: false,
           message: 'Email is required'
         });
       }
-      
+
       // Check if user is the owner of the quiz
       const quiz = await QuizService.getQuizById(id);
       if (!quiz) {
@@ -1138,7 +1202,7 @@ class QuizController {
           message: 'Quiz not found'
         });
       }
-      
+
       // Verify user has permission to remove shares
       if (quiz.user_id !== userId) {
         return res.status(403).json({
@@ -1146,14 +1210,14 @@ class QuizController {
           message: 'You do not have permission to remove shares for this quiz'
         });
       }
-      
+
       // Remove share
       const result = await QuizService.removeQuizShare(id, email);
-      
+
       // Invalidate relevant cache entries
       cacheService.delete(`quiz:${id}`);
       cacheService.invalidateByPattern(`quiz:${id}:shares`);
-      
+
       // Log activity if middleware available
       if (req.logActivity) {
         await req.logActivity(
@@ -1161,14 +1225,14 @@ class QuizController {
           `Removed share access for quiz: ${quiz.title} (ID: ${id}) from ${email}`
         );
       }
-      
+
       return res.status(200).json({
         success: true,
         message: 'Share access removed successfully'
       });
     } catch (error) {
       logger.error('Error removing quiz share:', error);
-      
+
       return res.status(500).json({
         success: false,
         message: 'An error occurred while removing share access',
@@ -1176,7 +1240,7 @@ class QuizController {
       });
     }
   }
-  
+
   /**
    * Update sharing permissions for a user
    * @param {Object} req - Express request object
@@ -1187,7 +1251,7 @@ class QuizController {
       const { id } = req.params;
       const { email, permissions } = req.body;
       const userId = req.user?.userId;
-      
+
       // Validate inputs
       if (!id) {
         return res.status(400).json({
@@ -1195,14 +1259,14 @@ class QuizController {
           message: 'Quiz ID is required'
         });
       }
-      
+
       if (!email) {
         return res.status(400).json({
           success: false,
           message: 'Email is required'
         });
       }
-      
+
       // Check if permissions is valid
       if (!permissions || !['view', 'edit'].includes(permissions)) {
         return res.status(400).json({
@@ -1210,7 +1274,7 @@ class QuizController {
           message: 'Valid permissions are required (view or edit)'
         });
       }
-      
+
       // Check if user is the owner of the quiz
       const quiz = await QuizService.getQuizById(id);
       if (!quiz) {
@@ -1219,7 +1283,7 @@ class QuizController {
           message: 'Quiz not found'
         });
       }
-      
+
       // Verify user has permission to update shares
       if (quiz.user_id !== userId) {
         return res.status(403).json({
@@ -1227,14 +1291,14 @@ class QuizController {
           message: 'You do not have permission to update shares for this quiz'
         });
       }
-      
+
       // Update share
       const result = await QuizService.updateQuizShare(id, email, permissions);
-      
+
       // Invalidate relevant cache entries
       cacheService.delete(`quiz:${id}`);
       cacheService.invalidateByPattern(`quiz:${id}:shares`);
-      
+
       // Log activity if middleware available
       if (req.logActivity) {
         await req.logActivity(
@@ -1242,14 +1306,14 @@ class QuizController {
           `Updated share permissions for quiz: ${quiz.title} (ID: ${id}) for ${email} to ${permissions}`
         );
       }
-      
+
       return res.status(200).json({
         success: true,
         message: 'Share permissions updated successfully'
       });
     } catch (error) {
       logger.error('Error updating quiz share permissions:', error);
-      
+
       return res.status(500).json({
         success: false,
         message: 'An error occurred while updating share permissions',
@@ -1257,7 +1321,7 @@ class QuizController {
       });
     }
   }
-  
+
   /**
    * Clone a quiz
    * @param {Object} req - Express request object
@@ -1268,7 +1332,7 @@ class QuizController {
       const { id } = req.params;
       const { title, folderId } = req.body;
       const userId = req.user?.userId;
-      
+
       // Validate inputs
       if (!id) {
         return res.status(400).json({
@@ -1276,7 +1340,7 @@ class QuizController {
           message: 'Quiz ID is required'
         });
       }
-      
+
       // Check if quiz exists
       const quiz = await QuizService.getQuizById(id);
       if (!quiz) {
@@ -1285,7 +1349,7 @@ class QuizController {
           message: 'Quiz not found'
         });
       }
-      
+
       // Check if user has access to the quiz
       if (quiz.user_id !== userId) {
         const hasAccess = await QuizService.checkQuizAccess(id, userId);
@@ -1296,7 +1360,7 @@ class QuizController {
           });
         }
       }
-      
+
       // Check if folder exists and user has access (if provided)
       if (folderId) {
         const hasAccess = await QuizService.checkFolderAccess(folderId, userId);
@@ -1307,20 +1371,20 @@ class QuizController {
           });
         }
       }
-      
+
       // Generate new title if not provided
       let newTitle = title;
       if (!newTitle) {
         newTitle = `Copy of ${quiz.title}`;
       }
-      
+
       // Check for duplicate title
       const titleCheck = await QuizService.checkDuplicateTitle(newTitle, userId);
       const finalTitle = titleCheck.isDuplicate ? titleCheck.suggestedTitle : newTitle;
-      
+
       // Clone quiz
       const result = await QuizService.cloneQuiz(id, userId, finalTitle, folderId);
-      
+
       if (result.success) {
         // Invalidate relevant cache entries
         cacheService.delete(`quizCount:user:${userId}`);
@@ -1328,7 +1392,7 @@ class QuizController {
         if (folderId) {
           cacheService.invalidateByPattern(`folder:${folderId}`);
         }
-        
+
         // Log activity if middleware available
         if (req.logActivity) {
           await req.logActivity(
@@ -1336,7 +1400,7 @@ class QuizController {
             `Cloned quiz: ${quiz.title} (ID: ${id}) to create new quiz: ${finalTitle} (ID: ${result.quizId})`
           );
         }
-        
+
         return res.status(201).json({
           success: true,
           message: 'Quiz cloned successfully',
@@ -1353,7 +1417,7 @@ class QuizController {
       }
     } catch (error) {
       logger.error('Error cloning quiz:', error);
-      
+
       return res.status(500).json({
         success: false,
         message: 'An error occurred while cloning the quiz',
@@ -1361,7 +1425,7 @@ class QuizController {
       });
     }
   }
-  
+
   /**
    * Get user's shared quizzes
    * @param {Object} req - Express request object
@@ -1373,27 +1437,27 @@ class QuizController {
       const page = parseInt(req.query.page) || 1;
       const limit = parseInt(req.query.limit) || 100;
       const offset = (page - 1) * limit;
-      
+
       if (!userId) {
         return res.status(401).json({
           success: false,
           message: 'Authentication is required to access shared quizzes'
         });
       }
-      
+
       // Generate cache key
       const cacheKey = `shared-quizzes:${userId}:page${page}:limit${limit}`;
-      
+
       // Try to get from cache first
       const cachedData = cacheService.get(cacheKey);
       if (cachedData) {
         logger.debug(`Using cached shared quizzes: ${cacheKey}`);
         return res.status(200).json(cachedData);
       }
-      
+
       // Get shared quizzes
       const result = await QuizService.getSharedQuizzes(userId, { limit, offset });
-      
+
       // Build response with pagination
       const response = {
         success: true,
@@ -1405,14 +1469,14 @@ class QuizController {
           totalPages: Math.ceil(result.total / limit)
         }
       };
-      
+
       // Cache the response
       cacheService.set(cacheKey, response, 300); // Cache for 5 minutes
-      
+
       return res.status(200).json(response);
     } catch (error) {
       logger.error('Error fetching shared quizzes:', error);
-      
+
       return res.status(500).json({
         success: false,
         message: 'An error occurred while fetching shared quizzes',
@@ -1420,7 +1484,7 @@ class QuizController {
       });
     }
   }
-  
+
   /**
    * Get recent quizzes for the current user
    * @param {Object} req - Express request object
@@ -1430,40 +1494,40 @@ class QuizController {
     try {
       const userId = req.user?.userId;
       const limit = parseInt(req.query.limit) || 5;
-      
+
       if (!userId) {
         return res.status(401).json({
           success: false,
           message: 'Authentication is required to access recent quizzes'
         });
       }
-      
+
       // Generate cache key
       const cacheKey = `recent-quizzes:${userId}:limit${limit}`;
-      
+
       // Try to get from cache first
       const cachedData = cacheService.get(cacheKey);
       if (cachedData) {
         logger.debug(`Using cached recent quizzes: ${cacheKey}`);
         return res.status(200).json(cachedData);
       }
-      
+
       // Get recent quizzes
       const quizzes = await QuizService.getRecentQuizzes(userId, limit);
-      
+
       // Build response
       const response = {
         success: true,
         data: quizzes
       };
-      
+
       // Cache the response
       cacheService.set(cacheKey, response, 300); // Cache for 5 minutes
-      
+
       return res.status(200).json(response);
     } catch (error) {
       logger.error('Error fetching recent quizzes:', error);
-      
+
       return res.status(500).json({
         success: false,
         message: 'An error occurred while fetching recent quizzes',
@@ -1471,7 +1535,7 @@ class QuizController {
       });
     }
   }
-  
+
   /**
    * Search for quizzes
    * @param {Object} req - Express request object
@@ -1484,7 +1548,7 @@ class QuizController {
       const page = parseInt(req.query.page) || 1;
       const limit = parseInt(req.query.limit) || 100;
       const offset = (page - 1) * limit;
-      
+
       // Validate inputs
       if (!query || query.trim() === '') {
         return res.status(400).json({
@@ -1492,10 +1556,10 @@ class QuizController {
           message: 'Search query is required'
         });
       }
-      
+
       // Search quizzes
       const result = await QuizService.searchQuizzes(query, userId, { limit, offset });
-      
+
       // Build response with pagination
       const response = {
         success: true,
@@ -1507,11 +1571,11 @@ class QuizController {
           totalPages: Math.ceil(result.total / limit)
         }
       };
-      
+
       return res.status(200).json(response);
     } catch (error) {
       logger.error('Error searching quizzes:', error);
-      
+
       return res.status(500).json({
         success: false,
         message: 'An error occurred while searching quizzes',
@@ -1519,7 +1583,7 @@ class QuizController {
       });
     }
   }
-  
+
   /**
    * Get user's quiz dashboard stats
    * @param {Object} req - Express request object
@@ -1528,17 +1592,17 @@ class QuizController {
   static async getQuizDashboardStats(req, res) {
     try {
       const userId = req.user?.userId;
-      
+
       if (!userId) {
         return res.status(401).json({
           success: false,
           message: 'Authentication is required to access quiz dashboard'
         });
       }
-      
+
       // Generate cache key
       const cacheKey = `quiz-dashboard:${userId}`;
-      
+
       // Try to get from cache first
       const cachedData = cacheService.get(cacheKey);
       if (cachedData) {
@@ -1548,7 +1612,7 @@ class QuizController {
           data: cachedData
         });
       }
-      
+
       // Get stats - perform all queries in parallel for better performance
       const [
         totalQuizzes,
@@ -1563,7 +1627,7 @@ class QuizController {
         QuizService.getFolderStats(userId),
         QuizService.getAIUsageStats(userId)
       ]);
-      
+
       // Build dashboard data
       const dashboardData = {
         totalQuizzes,
@@ -1572,17 +1636,17 @@ class QuizController {
         folderStats,
         aiUsageStats
       };
-      
+
       // Cache the data
       cacheService.set(cacheKey, dashboardData, 600); // Cache for 10 minutes
-      
+
       return res.status(200).json({
         success: true,
         data: dashboardData
       });
     } catch (error) {
       logger.error('Error fetching quiz dashboard stats:', error);
-      
+
       return res.status(500).json({
         success: false,
         message: 'An error occurred while fetching quiz dashboard stats',
@@ -1597,11 +1661,17 @@ class QuizController {
    */
   static async generateQuizFromFile(req, res) {
     let filePath = null;
-    
+
     try {
+      console.log('=== FILE UPLOAD DEBUG ===');
+      console.log('Request body:', req.body);
+      console.log('Uploaded file:', req.file);
+      console.log('API Key exists:', !!process.env.GOOGLE_GEMINI_API_KEY);
+      console.log('========================');
+
       const userId = req.user?.userId;
       const uploadedFile = req.file;
-      
+
       if (!uploadedFile) {
         return res.status(400).json({
           success: false,
@@ -1615,7 +1685,9 @@ class QuizController {
       let settings = {};
       try {
         settings = JSON.parse(req.body.settings || '{}');
+        console.log('Parsed settings:', settings);
       } catch (error) {
+        console.error('Settings parse error:', error);
         return res.status(400).json({
           success: false,
           message: 'รูปแบบการตั้งค่าไม่ถูกต้อง'
@@ -1630,190 +1702,320 @@ class QuizController {
         outputLanguage = 'Thai'
       } = settings;
 
-      // Check if Gemini API key exists
+      // ✅ ตรวจสอบ API Key อย่างละเอียด
       if (!process.env.GOOGLE_GEMINI_API_KEY) {
-        throw new Error('Google Gemini API key not configured');
+        console.error('GOOGLE_GEMINI_API_KEY not found in environment variables');
+        return res.status(503).json({
+          success: false,
+          message: 'ไม่พบการตั้งค่า Google Gemini API Key กรุณาติดต่อผู้ดูแลระบบ'
+        });
       }
 
-      // Initialize Gemini AI
-      const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY);
-      const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
+      // ✅ ตรวจสอบความถูกต้องของ API Key
+      if (!process.env.GOOGLE_GEMINI_API_KEY.startsWith('AIza')) {
+        console.error('Invalid GOOGLE_GEMINI_API_KEY format');
+        return res.status(503).json({
+          success: false,
+          message: 'รูปแบบ Google Gemini API Key ไม่ถูกต้อง'
+        });
+      }
+
+      const language = outputLanguage.toLowerCase();
+      console.log('Using language:', language);
+
+      // ✅ Initialize Gemini AI with error handling
+      let genAI, model;
+      try {
+        genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY);
+        model = genAI.getGenerativeModel({
+          model: "gemini-1.5-pro",
+          generationConfig: {
+            temperature: 0.7,
+            topP: 0.8,
+            topK: 40,
+            maxOutputTokens: 8192,
+          }
+        });
+        console.log('Gemini AI initialized successfully');
+      } catch (initError) {
+        console.error('Gemini AI initialization error:', initError);
+        return res.status(503).json({
+          success: false,
+          message: 'ไม่สามารถเชื่อมต่อกับบริการ AI ได้ กรุณาลองใหม่อีกครั้ง'
+        });
+      }
 
       let promptContent = '';
       let geminiInput = [];
 
-      // Handle different file types
-      if (uploadedFile.mimetype === 'application/pdf') {
-        // For PDF files, send directly to Gemini Vision API
-        const pdfBuffer = fs.readFileSync(uploadedFile.path);
-        const pdfBase64 = pdfBuffer.toString('base64');
-
+      // ✅ ปรับปรุง prompt สำหรับภาษาไทย
+      if (language === 'thai') {
         promptContent = `
-          วิเคราะห์เอกสาร PDF นี้และสร้างข้อสอบ ${numberOfQuestions} ข้อ
-          
-          รูปแบบข้อสอบ: ${questionType}
-          ภาษา: ${outputLanguage === 'Thai' ? 'ไทย' : 'English'}
-          ระดับนักเรียน: ${studentLevel || 'ปานกลาง'}
-          คำแนะนำเพิ่มเติม: ${additionalInstructions}
-          
-          สร้างข้อสอบจากเนื้อหาที่สำคัญในเอกสาร โดยให้ผลลัพธ์ในรูปแบบ JSON เท่านั้น ไม่ต้องมีคำอธิบายเพิ่มเติม:
-          {
-            "title": "ชื่อข้อสอบตามเนื้อหา",
-            "questions": [
-              {
-                "questionText": "คำถาม",
-                "options": [
-                  {"text": "ตัวเลือก A", "isCorrect": false},
-                  {"text": "ตัวเลือก B", "isCorrect": true},
-                  {"text": "ตัวเลือก C", "isCorrect": false},
-                  {"text": "ตัวเลือก D", "isCorrect": false}
-                ],
-                "explanation": "คำอธิบาย"
-              }
-            ]
-          }
-        `;
+วิเคราะห์เอกสารที่แนบมาและสร้างข้อสอบภาษาไทย
 
-        geminiInput = [
-          promptContent,
-          {
-            inlineData: {
-              data: pdfBase64,
-              mimeType: 'application/pdf'
-            }
-          }
-        ];
-      } else if (uploadedFile.mimetype === 'text/plain') {
-        // For text files, read content and send as text
-        const textContent = fs.readFileSync(uploadedFile.path, 'utf8');
-        
-        promptContent = `
-          สร้างข้อสอบ ${numberOfQuestions} ข้อ จากเนื้อหาต่อไปนี้:
-          
-          เนื้อหา:
-          ${textContent}
-          
-          รูปแบบข้อสอบ: ${questionType}
-          ภาษา: ${outputLanguage === 'Thai' ? 'ไทย' : 'English'}
-          ระดับนักเรียน: ${studentLevel || 'ปานกลาง'}
-          คำแนะนำเพิ่มเติม: ${additionalInstructions}
-          
-          ให้ผลลัพธ์ในรูปแบบ JSON เท่านั้น ไม่ต้องมีคำอธิบายเพิ่มเติม:
-          {
-            "title": "ชื่อข้อสอบ",
-            "questions": [
-              {
-                "questionText": "คำถาม",
-                "options": [
-                  {"text": "ตัวเลือก A", "isCorrect": false},
-                  {"text": "ตัวเลือก B", "isCorrect": true},
-                  {"text": "ตัวเลือก C", "isCorrect": false},
-                  {"text": "ตัวเลือก D", "isCorrect": false}
-                ],
-                "explanation": "คำอธิบาย"
-              }
-            ]
-          }
-        `;
+**สำคัญที่สุด: ข้อสอบทั้งหมดต้องเป็นภาษาไทยเท่านั้น ห้ามใช้ภาษาอังกฤษเด็ดขาด**
 
-        geminiInput = [promptContent];
+รายละเอียด:
+- จำนวนข้อ: ${numberOfQuestions} ข้อ
+- ประเภทคำถาม: ${questionType}
+- ทุกอย่างต้องเป็นภาษาไทย: คำถาม, ตัวเลือก, คำอธิบาย
+
+${additionalInstructions ? `ข้อกำหนดเพิ่มเติม: ${additionalInstructions}` : ''}
+${studentLevel ? `ระดับนักเรียน: ${studentLevel}` : ''}
+
+รูปแบบ JSON ที่ต้องการ (กรุณาตอบเป็น JSON เท่านั้น):
+{
+  "title": "หัวข้อข้อสอบภาษาไทย",
+  "questions": [
+    {
+      "questionText": "คำถามภาษาไทย",
+      "options": [
+        {"text": "ตัวเลือก ก", "isCorrect": false},
+        {"text": "ตัวเลือก ข", "isCorrect": true},
+        {"text": "ตัวเลือก ค", "isCorrect": false},
+        {"text": "ตัวเลือก ง", "isCorrect": false}
+      ],
+      "explanation": "คำอธิบายภาษาไทย"
+    }
+  ]
+}`;
       } else {
-        // For DOCX files - basic text extraction (would need mammoth.js for full support)
-        throw new Error('DOCX files not yet supported. Please use PDF or TXT files.');
+        promptContent = `
+Analyze the attached document and create an English quiz.
+
+**IMPORTANT: All content must be in English only**
+
+Details:
+- Number of questions: ${numberOfQuestions}
+- Question type: ${questionType}
+- All content must be in English: questions, options, explanations
+
+${additionalInstructions ? `Additional instructions: ${additionalInstructions}` : ''}
+${studentLevel ? `Student level: ${studentLevel}` : ''}
+
+Required JSON format (respond with JSON only):
+{
+  "title": "Quiz title in English",
+  "questions": [
+    {
+      "questionText": "Question in English",
+      "options": [
+        {"text": "Option A", "isCorrect": false},
+        {"text": "Option B", "isCorrect": true},
+        {"text": "Option C", "isCorrect": false},
+        {"text": "Option D", "isCorrect": false}
+      ],
+      "explanation": "Explanation in English"
+    }
+  ]
+}`;
       }
 
-      // Generate content with Gemini
-      const result = await model.generateContent(geminiInput);
-      const response = await result.response;
-      let responseText = response.text();
-
-      // Clean and parse JSON response
-      responseText = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-      
-      let quizData;
+      // ✅ Handle different file types with better error handling
       try {
-        quizData = JSON.parse(responseText);
-      } catch (parseError) {
-        console.error('JSON Parse Error:', parseError);
-        console.error('Response Text:', responseText);
-        throw new Error('ไม่สามารถประมวลผลผลลัพธ์จาก AI ได้');
-      }
+        if (uploadedFile.mimetype === 'application/pdf') {
+          console.log('Processing PDF file...');
+          const pdfBuffer = fs.readFileSync(uploadedFile.path);
+          const pdfBase64 = pdfBuffer.toString('base64');
 
-      // Validate quiz structure
-      if (!quizData.title || !quizData.questions || !Array.isArray(quizData.questions)) {
-        throw new Error('รูปแบบข้อมูลข้อสอบไม่ถูกต้อง');
-      }
-
-      // Create quiz object for saving (adapt based on your existing QuizService structure)
-      const quizToSave = {
-        title: quizData.title,
-        description: `Generated from file: ${uploadedFile.originalname}`,
-        topic: quizData.title,
-        questionType: questionType,
-        questions: quizData.questions,
-        userId: userId,
-        settings: {
-          sourceType: 'file',
-          fileName: uploadedFile.originalname,
-          fileSize: uploadedFile.size,
-          numberOfQuestions,
-          outputLanguage,
-          studentLevel,
-          additionalInstructions
+          geminiInput = [
+            promptContent,
+            {
+              inlineData: {
+                data: pdfBase64,
+                mimeType: 'application/pdf'
+              }
+            }
+          ];
+        } else if (uploadedFile.mimetype === 'text/plain') {
+          console.log('Processing text file...');
+          const textContent = fs.readFileSync(uploadedFile.path, 'utf8');
+          geminiInput = [
+            `${promptContent}\n\nเนื้อหาเอกสาร:\n\n${textContent}`
+          ];
+        } else if (uploadedFile.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+          // สำหรับไฟล์ DOCX - อาจต้องใช้ library เพิ่มเติม
+          console.log('DOCX files not fully supported yet, converting to text...');
+          return res.status(400).json({
+            success: false,
+            message: 'ขณะนี้รองรับเฉพาะไฟล์ PDF และ TXT เท่านั้น กรุณาแปลงไฟล์ DOCX เป็น PDF'
+          });
+        } else {
+          throw new Error('รองรับเฉพาะไฟล์ PDF และ TXT เท่านั้น');
         }
-      };
+      } catch (fileError) {
+        console.error('File processing error:', fileError);
+        return res.status(400).json({
+          success: false,
+          message: 'ไม่สามารถประมวลผลไฟล์ได้ กรุณาตรวจสอบรูปแบบไฟล์'
+        });
+      }
 
-      // Save to database (replace with your actual save method)
-      // const savedQuiz = await QuizService.createQuiz(quizToSave);
+      console.log('Sending request to Gemini AI...');
 
-      // For now, return the generated quiz (you can save it on the frontend)
-      const savedQuiz = {
-        id: Date.now(), // Temporary ID
-        ...quizToSave,
-        createdAt: new Date()
-      };
+      // ✅ Generate content with better error handling
+      let result, response, responseText;
+      try {
+        // เพิ่ม timeout และ retry logic
+        const timeout = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('AI request timeout')), 30000)
+        );
 
-      // Log the file upload activity
-      logger.info(`Quiz generated from file: ${uploadedFile.originalname} by user ${userId}`);
+        const generatePromise = model.generateContent(geminiInput);
+        result = await Promise.race([generatePromise, timeout]);
 
-      res.status(200).json({
-        success: true,
-        quiz: savedQuiz,
-        message: 'สร้างข้อสอบจากไฟล์สำเร็จ'
-      });
+        response = await result.response;
+        responseText = response.text();
 
-    } catch (error) {
-      console.error('File Quiz Generation Error:', error);
-      
-      // Handle specific errors
-      if (error.message.includes('API')) {
+        console.log('Gemini response received, length:', responseText.length);
+      } catch (aiError) {
+        console.error('Gemini AI error:', aiError);
+
+        if (aiError.message.includes('timeout')) {
+          return res.status(504).json({
+            success: false,
+            message: 'การประมวลผลใช้เวลานานเกินไป กรุณาลองใหม่อีกครั้ง'
+          });
+        }
+
+        if (aiError.message.includes('API_KEY')) {
+          return res.status(503).json({
+            success: false,
+            message: 'ปัญหาการยืนยันตัวตน Google Gemini API กรุณาติดต่อผู้ดูแลระบบ'
+          });
+        }
+
         return res.status(503).json({
           success: false,
           message: 'บริการ AI ไม่พร้อมใช้งานชั่วคราว กรุณาลองใหม่อีกครั้ง'
         });
       }
 
-      if (error.message.includes('JSON') || error.message.includes('ประมวลผล')) {
+      // ✅ Clean and parse JSON response
+      try {
+        responseText = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+
+        // ลบ text ที่ไม่ใช่ JSON
+        const jsonStart = responseText.indexOf('{');
+        const jsonEnd = responseText.lastIndexOf('}');
+
+        if (jsonStart !== -1 && jsonEnd !== -1) {
+          responseText = responseText.substring(jsonStart, jsonEnd + 1);
+        }
+
+        console.log('Cleaned response for parsing...');
+
+        const quizData = JSON.parse(responseText);
+        console.log('Quiz data parsed successfully');
+
+        // Validate quiz structure
+        if (!quizData.title || !quizData.questions || !Array.isArray(quizData.questions)) {
+          throw new Error('Invalid quiz structure');
+        }
+
+        if (quizData.questions.length === 0) {
+          throw new Error('No questions generated');
+        }
+
+        // Validate each question
+        for (let i = 0; i < quizData.questions.length; i++) {
+          const question = quizData.questions[i];
+          if (!question.questionText || !question.options || !Array.isArray(question.options)) {
+            throw new Error(`Question ${i + 1} has invalid structure`);
+          }
+        }
+
+        // ✅ Create final quiz object
+        const quizToSave = {
+          title: quizData.title,
+          description: `Generated from file: ${uploadedFile.originalname}`,
+          topic: quizData.title,
+          questionType: questionType,
+          questions: quizData.questions,
+          userId: userId,
+          settings: {
+            sourceType: 'file',
+            fileName: uploadedFile.originalname,
+            fileSize: uploadedFile.size,
+            numberOfQuestions,
+            outputLanguage,
+            studentLevel,
+            additionalInstructions
+          },
+          createdAt: new Date()
+        };
+
+        // Clean up uploaded file
+        try {
+          fs.unlinkSync(filePath);
+          console.log('Temporary file cleaned up');
+        } catch (cleanupError) {
+          console.warn('Failed to cleanup temporary file:', cleanupError);
+        }
+
+        // Log the activity
+        if (logger && logger.info) {
+          logger.info(`Quiz generated from file: ${uploadedFile.originalname} by user ${userId}`);
+        }
+
+        console.log('=== SUCCESS ===');
+        console.log('Quiz title:', quizToSave.title);
+        console.log('Questions count:', quizToSave.questions.length);
+        console.log('===============');
+
+        // ✅ Send success response
+        return res.status(200).json({
+          success: true,
+          quiz: quizToSave,
+          message: 'สร้างข้อสอบจากไฟล์สำเร็จ'
+        });
+
+      } catch (parseError) {
+        console.error('JSON Parse Error:', parseError);
+        console.error('Response Text:', responseText?.substring(0, 500));
+
         return res.status(422).json({
           success: false,
-          message: 'ไม่สามารถประมวลผลเอกสารได้ กรุณาตรวจสอบรูปแบบไฟล์'
+          message: 'ไม่สามารถประมวลผลผลลัพธ์จาก AI ได้ กรุณาลองใหม่อีกครั้ง'
         });
       }
 
-      res.status(500).json({
-        success: false,
-        message: error.message || 'เกิดข้อผิดพลาดในการสร้างข้อสอบจากไฟล์',
-        error: process.env.NODE_ENV === 'development' ? error.message : undefined
-      });
-    } finally {
-      // Clean up uploaded file
-      if (filePath && fs.existsSync(filePath)) {
+    } catch (error) {
+      console.error('=== FILE UPLOAD ERROR ===');
+      console.error('Error:', error);
+      console.error('Stack:', error.stack);
+      console.error('========================');
+
+      // Clean up file on error
+      if (filePath) {
         try {
           fs.unlinkSync(filePath);
+          console.log('Cleaned up file after error');
         } catch (cleanupError) {
-          console.error('Error cleaning up file:', cleanupError);
+          console.warn('Failed to cleanup file on error:', cleanupError);
         }
       }
+
+      // Handle different types of errors
+      if (error.message.includes('API') || error.message.includes('Gemini')) {
+        return res.status(503).json({
+          success: false,
+          message: 'บริการ AI ไม่พร้อมใช้งานชั่วคราว กรุณาลองใหม่อีกครั้ง'
+        });
+      }
+
+      if (error.message.includes('timeout')) {
+        return res.status(504).json({
+          success: false,
+          message: 'การประมวลผลใช้เวลานานเกินไป กรุณาลองใหม่อีกครั้ง'
+        });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: error.message || 'เกิดข้อผิดพลาดในการสร้างข้อสอบจากไฟล์',
+        error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      });
     }
   }
 }
