@@ -1,51 +1,65 @@
 {
-  "name": "signal-school-quiz-generator",
-  "version": "2.0.0",
-  "description": "Quiz Generator Application for Signal School - Royal Thai Army",
-  "main": "index.js",
+  "name": "quiz-generator-signal-school",
+  "version": "1.0.0",
+  "description": "แอพพลิเคชั่นสร้างข้อสอบสำหรับโรงเรียนทหารสื่อสาร กรมการทหารสื่อสาร",
+  "type": "module",
+  "main": "backend/index.js",
   "scripts": {
-    "start": "bun run index.js",
-    "dev": "bun --watch index.js",
+    "start": "cd backend && bun run index.js",
+    "dev": "cd backend && bun --watch index.js",
+    "start:backend": "bun run backend/index.js",
+    "dev:backend": "bun --watch backend/index.js",
+    "build": "bun run build:frontend && bun run build:backend",
+    "build:frontend": "cd frontend && npm run build",
+    "build:backend": "echo 'Backend build complete'",
     "test": "bun test",
-    "setup": "bun install",
-    "build": "echo 'Build completed'",
-    "db:migrate": "bun run src/database/migrations/createTables.js",
-    "db:seed": "bun run src/database/seeders/defaultData.js",
-    "logs:clear": "rm -rf logs/*.log",
-    "cleanup": "rm -rf uploads/temp/* && rm -rf logs/*.log"
+    "test:watch": "bun test --watch",
+    "lint": "eslint backend/**/*.js frontend/src/**/*.{js,jsx,ts,tsx}",
+    "lint:fix": "eslint backend/**/*.js frontend/src/**/*.{js,jsx,ts,tsx} --fix",
+    "db:migrate": "bun run backend/database/migrate.js",
+    "db:seed": "bun run backend/database/seed.js",
+    "db:reset": "bun run db:migrate && bun run db:seed",
+    "setup": "bun install && cd frontend && npm install",
+    "clean": "rm -rf node_modules frontend/node_modules backend/uploads/* logs/*"
   },
   "keywords": [
-    "quiz", 
-    "education", 
-    "signal-school", 
-    "army", 
-    "thai", 
-    "gemini", 
-    "ai"
+    "quiz",
+    "education",
+    "signal-school",
+    "thai-army",
+    "gemini-ai",
+    "express",
+    "react",
+    "postgresql"
   ],
-  "author": "Signal School Development Team",
+  "author": "Signal School - Royal Thai Army",
   "license": "MIT",
   "dependencies": {
-    "express": "^4.18.2",
-    "cors": "^2.8.5",
-    "helmet": "^7.1.0",
-    "dotenv": "^16.3.1",
-    "winston": "^3.11.0",
-    "express-rate-limit": "^7.1.5",
-    "jsonwebtoken": "^9.0.2",
+    "@google/generative-ai": "^0.15.0",
     "bcryptjs": "^2.4.3",
-    "joi": "^17.11.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.3.1",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
-    "mysql2": "^3.6.5",
-    "@google/generative-ai": "^0.2.1",
-    "pdf-parse": "^1.1.1",
-    "mammoth": "^1.6.0",
-    "node-cache": "^5.1.2",
-    "nodemailer": "^6.9.7"
+    "nodemailer": "^6.9.14",
+    "pg": "^8.12.0",
+    "sequelize": "^6.37.3",
+    "uuid": "^10.0.0",
+    "validator": "^13.12.0",
+    "winston": "^3.13.1"
   },
   "devDependencies": {
-    "nodemon": "^3.0.2",
-    "concurrently": "^8.2.2"
+    "@types/node": "^20.14.11",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-prettier": "^5.1.3",
+    "nodemon": "^3.1.4",
+    "prettier": "^3.3.2",
+    "supertest": "^7.0.0"
   },
   "engines": {
     "node": ">=18.0.0",
@@ -53,10 +67,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/signal-school/quiz-generator.git"
+    "url": "https://github.com/signal-school/quiz-generator-app.git"
   },
   "bugs": {
-    "url": "https://github.com/signal-school/quiz-generator/issues"
+    "url": "https://github.com/signal-school/quiz-generator-app/issues"
   },
-  "homepage": "https://github.com/signal-school/quiz-generator#readme"
+  "homepage": "https://github.com/signal-school/quiz-generator-app#readme"
 }
