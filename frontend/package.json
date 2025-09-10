@@ -12,7 +12,7 @@
     "bootstrap": "^5.3.3",
     "dompurify": "^3.2.6",
     "glob": "^11.0.3",
-    "jspdf": "^3.0.1",
+    "jspdf": "^3.0.2",
     "lodash": "^4.17.21",
     "react": "^19.0.0",
     "react-bootstrap": "^2.10.9",
